@@ -180,8 +180,8 @@ if __name__ == '__main__':
 
     for dataset in args['datasets']:
         # Check if the best model is saved
-        if os.path.exists(os.path.join(args['base_folder'], 'results_metrics_J', dataset, 'kan_gam.pkl')):
-            with open(os.path.join(args['base_folder'], 'results_metrics_J', dataset, 'kan_gam.pkl'), 'rb') as f:
+        if os.path.exists(os.path.join(args['base_folder'], 'results_metrics', dataset, 'kan_gam.pkl')):
+            with open(os.path.join(args['base_folder'], 'results_metrics', dataset, 'kan_gam.pkl'), 'rb') as f:
                 metrics = pickle.load(f)
             print(f"Model for dataset {dataset} found. Using parameters:")
             print(metrics)

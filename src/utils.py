@@ -36,7 +36,7 @@ def get_config(task):
     base_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     args['base_folder'] = base_folder
     args['data_folder'] = os.path.join(base_folder, 'data')
-    results_folder = 'results_metrics_J' if task == 'metrics' else 'results_explainability_bigger_size'
+    results_folder = 'results_metrics' if task == 'metrics' else 'results_explainability_bigger_size'
     args['results_folder'] = os.path.join(base_folder, results_folder)
     create_results_folder(args['results_folder'], args)
 
