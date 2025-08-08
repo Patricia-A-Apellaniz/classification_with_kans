@@ -1,0 +1,11 @@
+pandas
+numpy
+scikit-learn
+pykan
+matplotlib
+torch
+tqdm
+tabulate
+pyyaml
+loguru
+tensorboard
