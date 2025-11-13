@@ -53,14 +53,14 @@ You can modify training and model configurations in `utils.py`.
 
 To train, test, and evaluate all models (MLP, LR, RF, NAM, Logistic-KAN, KAAM), run:
    ```sh
-   python src/main_metrics.py
+   python src/main_performance.py
    ```
 This script outputs standard classification metrics such as accuracy, AUC, F1-score, precision, and recall.
 
 ### 2. Explore Explainability Tools
 To generate visual explanation tools (e.g., partial dependence plots, radar plots, nearest-patient comparisons), run:
    ```sh
-   python src/main_explainability.py
+   python src/main_interpretability.py
    ```
 
 These plots illustrate the explainability capabilities of the proposed models and are saved in the /results/ directory, grouped by dataset and patient.

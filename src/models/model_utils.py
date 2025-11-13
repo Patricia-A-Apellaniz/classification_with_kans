@@ -4,12 +4,12 @@
 
 # Package imports
 from kan import *
+from scipy.stats import t
 from sklearn.model_selection import GridSearchCV, KFold
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from src.models.models import Mlp_model, LogisticRegressionModel, RandomForestModel, Kan_model, NAMModel
 
 
-# Ancillary methods
 def get_metrics(y_true, y_pred, y_proba):
     y_true = np.squeeze(y_true)
     y_pred = np.squeeze(y_pred)
@@ -36,6 +36,49 @@ def get_metrics(y_true, y_pred, y_proba):
                 'recall': recall_score(y_true, y_pred, average='weighted', zero_division=0),
                 'f1': f1_score(y_true, y_pred, average='weighted', zero_division=0),
                 'roc_auc': roc_auc_score(y_true, y_proba, average='weighted', multi_class='ovo')}
+
+
+def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_proba = np.array(y_proba)
+    original_classes = np.unique(y_true)
+    metrics_list = []
+
+    for _ in range(n_bootstrap):
+        indices = np.random.choice(len(y_true), len(y_true), replace=True)
+        y_true_sample = y_true[indices]
+
+        # Check if all classes are present in the sample
+        if not np.all(np.isin(original_classes, np.unique(y_true_sample))):
+            continue  # Skip this iteration if not all classes are present
+
+        sample_metrics = get_metrics(y_true_sample, y_pred[indices], y_proba[indices])
+        metrics_list.append(sample_metrics)
+
+    # Group metrics by name
+    metric_names = metrics_list[0].keys()
+    all_metrics = {k: [] for k in metric_names}
+    for m in metrics_list:
+        for k in m:
+            all_metrics[k].append(m[k])
+
+    # Calculate mean and confidence intervals
+    alpha = 1 - ci / 100
+    t_val = t.ppf(1 - alpha / 2, df=n_bootstrap - 1)
+    metrics_with_ci = {}
+
+    for k, values in all_metrics.items():
+        values = np.array(values)
+        mean = np.mean(values)
+        std_err = np.std(values, ddof=1) / np.sqrt(n_bootstrap)
+        ci_range = t_val * std_err
+        metrics_with_ci[k] = {
+            'mean': mean,
+            f'CI_{ci}%': (mean - ci_range, mean + ci_range)
+        }
+
+    return metrics_with_ci
 
 
 def get_params(model_name, default):
@@ -168,4 +211,5 @@ def get_best_params(model_name, x_train, y_train, args):
         result = search.fit(x_train, y_train.squeeze())
 
         return result.best_params_, result.best_estimator_
+
 

@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+from tueplots import bundles
 from matplotlib.path import Path
 from matplotlib.spines import Spine
 from matplotlib.transforms import Affine2D
@@ -119,60 +120,64 @@ def radar_factory(num_vars, frame='circle'):  # Adapted from https://stackoverfl
 def plot_sorted_variances(x_train, x_test, binary, delta_train, delta_test, n_logits, args, dataset):
     variances_train = [d.var(axis=0) for d in delta_train]
     variances_test = [d.var(axis=0) for d in delta_test]
+    # TODO: Adjust legend box location based on dataset!!!
+    legend_box_loc = [(0.5, -1.8), (0.5, -3.3), (0.5, -3.3), (0.5, -3.3), (0.5, -3.3), (0.5, -3.3), (0.5, -3.3)]
     for i in range(n_logits):
-        plt.figure(figsize=(8, 9))
+        # Plot just the top 7 features by variance
         idxs_train = np.argsort(variances_train[i])[::-1]  # Sort by training variance
-
-        # plt.plot(variances_train[i].values[idxs_train], label=f'train')
-        # plt.plot(variances_test[i].values[idxs_train], label=f'test')
-
+        idxs_train = idxs_train[:7]
         labels = variances_train[i].index[idxs_train]
-        x = np.arange(len(labels))
-
-        # Barras para train y test (desplazadas para no solaparse)
         width = 0.4
-        plt.bar(x - width / 2, variances_train[i].values[idxs_train], width=width, label='Train')
-        plt.bar(x + width / 2, variances_test[i].values[idxs_train], width=width, label='Test')
-
-
-        plt.title(f'Variance of delta values for logit {i}', fontsize=22)
-        plt.xlabel('Feature', fontsize=20)
-        plt.ylabel('Variance', fontsize=20)
-        plt.legend(loc='best', fontsize=18)
-        # Add the feature names
-        plt.xticks(ticks=np.arange(len(variances_train[i])),
-                   labels=variances_train[i].index[idxs_train],
-                   rotation=90, fontsize=18)
-        plt.yticks(fontsize=18)
-        # Ensure that ticks are not cut off
-        plt.tight_layout()
-        plt.show()
-        plt.savefig(os.path.join(args['results_folder'], dataset, f'variances_{i}.png'), bbox_inches='tight', dpi=600)
-        plt.close()
+        with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
+            # Train and test variances side by side (not stacked)
+            plt.bar(np.arange(len(labels)) - width / 2, variances_train[i].values[idxs_train], width=width,
+                    label='Training',
+                    color='tab:blue')
+            plt.bar(np.arange(len(labels)) + width / 2, variances_test[i].values[idxs_train], width=width,
+                    label='Testing',
+                    color='tab:orange')
+            plt.title(f'Feature importance for Class {i}')
+            plt.xticks(ticks=np.arange(len(labels)), labels=variances_train[i].index[idxs_train], rotation=90)
+            plt.tight_layout(rect=[0.02, 0.15, 1, 1])
+            plt.xlabel('Feature')
+            plt.ylabel('Importance')
+            plt.legend(loc='lower center', bbox_to_anchor=legend_box_loc[i], ncol=2)
+            plt.rcParams.update(bundles.icml2024(usetex=False))
+            plt.savefig(os.path.join(args['results_folder'], dataset, f'variances_{i}.pdf'), dpi=600)
+            plt.close()
 
     for i in range(n_logits):
         logit = 1 if binary else i
         for feat in x_train.columns:
             if variances_train[i][feat] > 1e-6:  # Only plot the features with a variance above a threshold
-                plt.scatter(x_train[feat], delta_train[i][feat], label=f"{feat}_{logit}_train")
-                plt.scatter(x_test[feat], delta_test[i][feat], label=f"{feat}_{logit}_test")
-
-                # Plot the average delta values as well
-                plt.plot(x_train[feat].unique(), delta_train[i][feat].mean() * np.ones_like(x_train[feat].unique()),
-                         color='b', linestyle='-')
-                plt.plot(x_test[feat].unique(), delta_test[i][feat].mean() * np.ones_like(x_test[feat].unique()),
-                         color='r', linestyle='-')
-
-                plt.title(f'Delta for {feat} and logit {logit}', fontsize=22)
-                plt.xlabel(feat, fontsize=20)
-                plt.ylabel('Delta', fontsize=20)
-                plt.legend(loc='best', fontsize=18)
-                plt.xticks(fontsize=18)
-                plt.yticks(fontsize=18)
-                plt.savefig(os.path.join(args['results_folder'], dataset, f'delta_{feat}_logit{logit}.png'),
-                            bbox_inches='tight', dpi=600)
-                plt.close()  # Note: a higher delta means a higher risk
-
+                with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
+                    plt.scatter(x_train[feat],
+                                delta_train[i][feat],
+                                facecolors='tab:blue',
+                                edgecolors='tab:blue',
+                                label=f"Train",
+                                marker='o')
+                    plt.scatter(x_test[feat],
+                                delta_test[i][feat],
+                                facecolors='tab:red',
+                                label=f"Test",
+                                marker='x',
+                                linewidths=0.5)
+                    # Plot the average delta values as well
+                    plt.plot(x_train[feat].unique(),
+                             delta_train[i][feat].mean() * np.ones_like(x_train[feat].unique()),
+                             color='tab:blue')
+                    plt.plot(x_test[feat].unique(),
+                             delta_test[i][feat].mean() * np.ones_like(x_test[feat].unique()),
+                             color='tab:red',
+                             linewidth=0.7)
+                    plt.title(f'Delta for {feat} and Class {logit}')
+                    plt.xlabel(feat)
+                    plt.ylabel('Delta')
+                    plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.5), ncol=2)
+                    plt.rcParams.update(bundles.icml2024(usetex=False))
+                    plt.savefig(os.path.join(args['results_folder'], dataset, f'delta_{feat}_logit_{logit}.pdf'), dpi=600)
+                    plt.close()  # Note: a higher delta means a higher risk
 
 def plot_binary_explanation_plot(y_true, y_pred_proba, labels, threshold, outfile=None, title='Probability of positive class'):  # Added by Juan
     y_pred_proba = np.squeeze(np.array(y_pred_proba))
@@ -180,24 +185,26 @@ def plot_binary_explanation_plot(y_true, y_pred_proba, labels, threshold, outfil
     # Umbralize the probabilities: the minimum probability is 0.01
     y_pred_proba = np.where(y_pred_proba < 0.01, 0.01, y_pred_proba)
     y_true = np.squeeze(np.array(y_true))
-    fig, ax = plt.subplots()
-    sort_idx = np.argsort(y_pred_proba)[::-1]  # Sort the patients by probability
 
-    # Plot a bar diagram of the probability of each patient, where the color bar depends on the y_true value
-    color_vals = [['r', 'g'][int(y)] for y in y_true[sort_idx]]
-    ax.bar(range(len(y_pred_proba)), y_pred_proba[sort_idx], color=color_vals)
-    ax.axhline(threshold, color='k', linestyle='--', label='Threshold')
-    ax.set_yscale('log')  # Plot in log scale the vertical axis for better visualization
-    ax.set_xlabel('Patient', fontsize=20)
-    ax.set_ylabel('Log-Probability', fontsize=20)
-    ax.set_title(title, fontsize=22)
-    ax.tick_params(axis='both', labelsize=18)
+    with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
+        fig, ax = plt.subplots()
+        sort_idx = np.argsort(y_pred_proba)[::-1]  # Sort the patients by probability
 
-    # Add the legent: red for the first label, green for the second label
-    red_patch = mpatches.Patch(color='red', label=labels[0])
-    green_patch = mpatches.Patch(color='green', label=labels[1])
-    ax.legend(handles=[red_patch, green_patch], loc='best', fontsize=18)
-    plt.tight_layout()
-    if outfile is not None:
-        plt.savefig(outfile + '_explanation.png', bbox_inches='tight', dpi=600)
-    plt.close()
+        # Plot a bar diagram of the probability of each patient, where the color bar depends on the y_true value
+        color_vals = [['r', 'g'][int(y)] for y in y_true[sort_idx]]
+        ax.bar(range(len(y_pred_proba)), y_pred_proba[sort_idx], color=color_vals)
+        ax.axhline(threshold, color='k', linestyle='--', label='Threshold')
+        ax.set_yscale('log')  # Plot in log scale the vertical axis for better visualization
+        ax.tick_params(axis='both')
+        ax.set_xlabel('Patient')
+        ax.set_ylabel('Log-Probability')
+        ax.set_title(title)
+
+        # Add the legent: red for the first label, green for the second label
+        red_patch = mpatches.Patch(color='red', label=labels[0])
+        green_patch = mpatches.Patch(color='green', label=labels[1])
+        ax.legend(handles=[red_patch, green_patch], loc='lower center', bbox_to_anchor=(0.5, -0.6), ncol=2)
+        plt.rcParams.update(bundles.icml2024(usetex=False))
+        if outfile is not None:
+            plt.savefig(outfile + '_explanation.pdf', dpi=600)
+        plt.close()

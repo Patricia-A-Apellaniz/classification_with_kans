@@ -9,3 +9,7 @@ tabulate
 pyyaml
 loguru
 tensorboard
+shap
+ipywidgets
+statsmodels
+tueplots
