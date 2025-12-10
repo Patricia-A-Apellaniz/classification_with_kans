@@ -389,7 +389,8 @@ if __name__ == '__main__':
                                                        color='tab:green',
                                                        s=8,
                                                        alpha=1)
-                                    axs[j].set_ylabel(feat_name)
+                                    axs[j].set_ylabel('Contribution')
+                                    axs[j].set_xlabel(feat_name)
                                 else:  # Single plot
                                     axs.plot(x_train[feat_name].values[idxs],
                                              delta_train[l][feat_name].values[idxs],
@@ -410,7 +411,8 @@ if __name__ == '__main__':
                                                     color='tab:green',
                                                     s=8,
                                                     alpha=1)
-                                    axs.set_ylabel(feat_name)
+                                    axs.set_ylabel('Contribution')
+                                    axs.set_xlabel(feat_name)
                         red_patch = mpatches.Patch(color='tab:red', label='Test patient')
                         green_patch = mpatches.Patch(color='tab:green', label='Closest patients')
                         blue_patch = mpatches.Patch(color='tab:blue', label='Train patients')
@@ -419,11 +421,11 @@ if __name__ == '__main__':
                         if n_feats > 1:
                             axs[0].set_title(f'Patient PDPs')
                             axs[-1].legend(handles=[red_patch, green_patch, blue_patch], loc='lower center',
-                                           bbox_to_anchor=(0.5, -0.7), ncol=3)
+                                           bbox_to_anchor=(0.5, -1.0), ncol=3)
                         else:
                             axs.set_title(f'Patient PDPs')
                             axs.legend(handles=[red_patch, green_patch, blue_patch], loc='lower center',
-                                           bbox_to_anchor=(0.5, -0.4), ncol=3)
+                                           bbox_to_anchor=(0.5, -0.7), ncol=3)
                         plt.rcParams.update(bundles.icml2024(usetex=False))
                         plt.savefig(os.path.join(patients_results_folder, f'patient_{i}_curves_logit_{logit}.pdf'),
                                     bbox_inches='tight',
