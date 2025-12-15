@@ -13,3 +13,4 @@ shap
 ipywidgets
 statsmodels
 tueplots
+seaborn

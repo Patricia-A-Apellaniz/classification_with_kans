@@ -9,7 +9,11 @@ import time
 import pickle
 
 import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
+from tueplots import bundles
 from tabulate import tabulate
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +27,8 @@ from src.utils import get_config, get_results_table, get_p_values_from_table_dat
 def get_mrr_datasets(mrr_all_elements):
     for model in args['models']:
         if len(mrr_all_elements[model]) > 0:
-            mrr_all_elements[model] = np.round(sum([1 / v for v in mrr_all_elements[model]]) / len(mrr_all_elements[model]), 2)
+            mrr_all_elements[model] = np.round(
+                sum([1 / v for v in mrr_all_elements[model]]) / len(mrr_all_elements[model]), 2)
         else:
             mrr_all_elements[model] = 0
 
@@ -73,7 +78,9 @@ def get_mrr_models():
         mrr = {model_name: [] for model_name in args['models']}
 
         for dataset in args['datasets']:
-            values = [{res[1]: float(res[idx+2].split(' ')[0])} for res in results_table if res[0] == dataset and float(res[idx+2].split(' ')[0]) > -0.5]  # Note htat -0.5 is just a threshold: we put -1 to flag the metrics that were not computed
+            values = [{res[1]: float(res[idx + 2].split(' ')[0])} for res in results_table if
+                      res[0] == dataset and float(res[idx + 2].split(' ')[
+                                                      0]) > -0.5]  # Note htat -0.5 is just a threshold: we put -1 to flag the metrics that were not computed
             values = sorted(values, key=lambda x: list(x.values())[0], reverse=True)
             val = 1  # Initial value for the rank
             for j in range(len(values)):
@@ -97,6 +104,83 @@ def get_mrr_models():
     print(tabulate(mrr_results_table, headers=mrr_table_col_names, floatfmt=".2f"))
 
     return mrr_all_elements
+
+
+def get_box_plots(results_folder):
+    ranking = {}
+    for dataset in args['datasets']:
+        if dataset not in ranking:
+            ranking[dataset] = {}
+        # Go through each dataset and get the ranking of the models for all metrics
+        dataset_results = [res for res in results_table if res[0] == dataset]
+        for metric_idx in range(2, len(table_col_names) - 1):
+            metric_values = []
+            for res in dataset_results:
+                value = float(res[metric_idx].split(' ')[0])
+                if value > -0.5:  # We only consider valid values
+                    metric_values.append((res[1], value))  # (model_name, value)
+            # Sort by value in descending order
+            metric_values = sorted(metric_values, key=lambda x: x[1], reverse=True)
+            rank = 1
+            for j in range(len(metric_values)):
+                if j > 0:
+                    if abs(metric_values[j][1] - metric_values[j - 1][1]) > 0.001:
+                        rank += 1
+                model_name = metric_values[j][0]
+                if model_name not in ranking[dataset]:
+                    ranking[dataset][model_name] = []
+                ranking[dataset][model_name].append(rank)
+
+    # Create boxplots for each model with seaborn
+    data = []
+    for dataset in args['datasets']:
+        if dataset in ranking:
+            for model in args['models']:
+                if model in ranking[dataset]:
+                    for r in ranking[dataset][model]:
+                        data.append({'Dataset': dataset, 'Model': model, 'Rank': r})
+    df = pd.DataFrame(data)
+    df['Dataset'] = df['Dataset'].map({'heart': 'Heart',
+                                       'diabetes_h': 'Diabetes-H',
+                                       'diabetes_130': 'Diabetes-130',
+                                       'obesity': 'Obesity',
+                                       'obesity_bin': 'Obesity-Bin',
+                                       'breast_cancer': 'Breast-Cancer'})
+    df['Model'] = df['Model'].map({'mlp': 'MLP',
+                                   'lr': 'LR',
+                                   'rf': 'RF',
+                                   'nam': 'NAM',
+                                   'kan': 'Logistic-KAN',
+                                   'kan_gam': 'KAAM'})
+    with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
+        plt.figure(figsize=(6.5, 2))
+        palette = sns.color_palette("tab10")
+        model_palette = dict(zip(df['Model'].unique(), palette))
+
+        ax = sns.boxplot(
+            data=df,
+            x='Dataset',
+            y='Rank',
+            hue='Model',
+            palette=model_palette,
+            medianprops=dict(color='red', linewidth=2),
+            whis=[0, 100],
+            fliersize=0
+        )
+        ax.set_xlabel("")
+        for patch, median_line in zip(ax.patches, ax.lines[4::6]):
+            facecolor = patch.get_facecolor()
+            median_line.set_color(facecolor)
+            median_line.set_linewidth(2.5)
+
+        ax.set_yticks([1, 2, 3, 4, 5])
+        ax.set_ylabel('Rank')
+        ax.grid(axis='y')
+        ax.legend(loc='center', bbox_to_anchor=(1.1, 0.5))
+        plt.tight_layout()
+        plt.savefig(results_folder + os.sep + 'ranking_boxplots.pdf', dpi=300)
+        plt.show()
+        plt.close()
 
 
 if __name__ == '__main__':
@@ -142,6 +226,7 @@ if __name__ == '__main__':
 
     #### Show results
     results_table, table_col_names, results_table_no_ci = get_results_table(args)
+    get_box_plots(args['results_folder'])
     mrr_all = get_mrr_models()  # Compute MRR for each metric among all models
     get_mrr_datasets(mrr_all)  # Compute MRR for each model among all datasets
     get_p_values()  # Get p-values to compare them with MRR values

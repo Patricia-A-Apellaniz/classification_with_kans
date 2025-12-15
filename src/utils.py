@@ -42,7 +42,7 @@ def get_config(task):
 
     # Dataset selection
     # Options are 'all', 'heart', 'diabetes_h', 'diabetes_130', 'obesity', 'obesity_bin', 'breast_cancer'
-    datasets = 'diabetes_130'
+    datasets = 'all'
     if datasets == 'all':
         args['datasets'] = ['heart', 'diabetes_h', 'diabetes_130', 'obesity', 'obesity_bin', 'breast_cancer']
     else:
@@ -56,7 +56,7 @@ def get_config(task):
     args['results_folder'] = os.path.join(base_folder, results_folder)
 
     # Training parameters
-    args['train'] = True  # If True, train the models. If False, load the models from disk
+    args['train'] = not True  # If True, train the models. If False, load the models from disk
     args['n_folds'] = 3  # Number of folds for cross-validation
     args['n_jobs'] = 1  # Number of jobs to run in parallel
 
