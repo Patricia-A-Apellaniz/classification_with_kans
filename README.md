@@ -16,7 +16,7 @@ This repository provides:
 - Pre-trained models to save training time.
 - Scripts to replicate results from the paper.
 
-For more details, see full paper [here](https://arxiv.org/blabla).
+For more details, see full paper [here](https://doi.org/10.48550/arXiv.2509.16750).
 
 
 <!-- GETTING STARTED -->
@@ -86,7 +86,7 @@ These plots illustrate the explainability capabilities of the proposed models an
 <!-- CONTACT -->
 ## Contact
 
-Patricia A. Apellaniz - patricia.alonsod@upm.es
+Patricia A. Apellániz - patricia.alonsod@upm.es
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
