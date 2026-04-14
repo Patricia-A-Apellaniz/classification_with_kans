@@ -65,7 +65,10 @@ To generate visual explanation tools (e.g., partial dependence plots, radar plot
 
 These plots illustrate the explainability capabilities of the proposed models and are saved in the /results/ directory, grouped by dataset and patient.
 
-
+If you want to visualize them through an interative interface, run:
+   ```sh
+   python src/gradio_app.py
+   ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -87,6 +90,7 @@ These plots illustrate the explainability capabilities of the proposed models an
 ## Contact
 
 Patricia A. Apellániz - patricia.alonsod@upm.es
+Mar Elizo - mar.ealonso@upm.es
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
