@@ -90,6 +90,7 @@ If you want to visualize them through an interative interface, run:
 ## Contact
 
 Patricia A. Apellániz - patricia.alonsod@upm.es
+
 Mar Elizo - mar.ealonso@upm.es
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
