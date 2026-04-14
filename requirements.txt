@@ -14,3 +14,6 @@ ipywidgets
 statsmodels
 tueplots
 seaborn
+gradio
+sympy
+scipy
