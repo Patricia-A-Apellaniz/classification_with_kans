@@ -65,9 +65,15 @@ To generate visual explanation tools (e.g., partial dependence plots, radar plot
 
 These plots illustrate the explainability capabilities of the proposed models and are saved in the /results/ directory, grouped by dataset and patient.
 
-If you want to visualize them through an interative interface, run:
-   ```sh
-   python src/gradio_app.py
+### 3. Launch the Interactive Interface
+
+For the heart clinical dataset use case, an interactive interface is available.  
+It requires the raw normalization file located at `data/ui_normalization/7_data.csv`.
+
+To launch it, run:
+
+  ```sh
+  python src/gradio_app.py
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
