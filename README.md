@@ -67,10 +67,7 @@ These plots illustrate the explainability capabilities of the proposed models an
 
 ### 3. Launch the Interactive Interface
 
-For the heart clinical dataset use case, an interactive interface is available on Hugging Face Spaces. You can launch it here:
-   ```
-https://huggingface.co/spaces/marElizo/classification_with_kans
-   ```
+For the heart clinical dataset use case, an interactive interface is available on Hugging Face Spaces. You can launch it [here](https://huggingface.co/spaces/marElizo/classification_with_kans).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
