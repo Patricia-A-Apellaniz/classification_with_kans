@@ -36,7 +36,7 @@ You should have the following installed on your machine:
 
 Download the repo manually (as a .zip file) or clone it using Git.
    ```sh
-   git clone https://github.com/blabla/blabla.git
+   git clone https://github.com/Patricia-A-Apellaniz/classification_with_kans.git
    ```
 
 Already trained models and dictionaries with results can be found in /classification_with_kans/results_metrics/.
@@ -67,13 +67,9 @@ These plots illustrate the explainability capabilities of the proposed models an
 
 ### 3. Launch the Interactive Interface
 
-For the heart clinical dataset use case, an interactive interface is available.  
-It requires the raw normalization file located at `data/ui_normalization/7_data.csv`.
-
-To launch it, run:
-
-  ```sh
-  python src/gradio_app.py
+For the heart clinical dataset use case, an interactive interface is available on Hugging Face Spaces. You can launch it here:
+   ```
+https://huggingface.co/spaces/marElizo/classification_with_kans
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
