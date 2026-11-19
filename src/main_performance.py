@@ -229,12 +229,15 @@ if __name__ == '__main__':
                     f"on {dataset_name}"
                 )
 
-                t0 = time.time()
-
                 if args['hp_search']:
                     print("Running hyperparameter search.")
 
-                    best_params, best_model = get_best_params(
+                    (
+                        best_params,
+                        best_model,
+                        hp_search_time,
+                        training_time,
+                    ) = get_best_params(
                         model_name,
                         x_train,
                         y_train,
@@ -243,15 +246,18 @@ if __name__ == '__main__':
                 else:
                     print("Using saved hyperparameters.")
 
-                    best_params, best_model = fit_with_saved_params(
+                    (
+                        best_params,
+                        best_model,
+                        hp_search_time,
+                        training_time,
+                    ) = fit_with_saved_params(
                         model_name,
                         dataset_name,
                         x_train,
                         y_train,
                         args,
                     )
-
-                train_time = time.time() - t0
 
                 if best_model is None:
                     print(
@@ -261,12 +267,19 @@ if __name__ == '__main__':
                     continue
 
                 y_test_array = np.asarray(y_test).reshape(-1)
+
+                start = time.perf_counter()
+
                 y_pred = np.asarray(
                     best_model.predict(x_test)
                 ).reshape(-1)
+
                 y_proba = np.asarray(
                     best_model.predict_proba(x_test)
                 )
+
+                inference_time = time.perf_counter() - start
+
                 classes = np.asarray(
                     best_model.classes_
                 ).reshape(-1)
@@ -304,7 +317,9 @@ if __name__ == '__main__':
                     'y_proba': y_proba,
                     'classes': classes,
                     'hyperparameters': best_params,
-                    'train_time': train_time,
+                    'hp_search_time': hp_search_time,
+                    'training_time': training_time,
+                    'inference_time': inference_time,
                     'hp_search': args['hp_search'],
                 }
 
@@ -323,9 +338,21 @@ if __name__ == '__main__':
                         protocol=pickle.HIGHEST_PROTOCOL,
                     )
 
+                if hp_search_time is None:
+                    print("Hyperparameter search: not performed.")
+                else:
+                    print(
+                        f"Hyperparameter search: "
+                        f"{hp_search_time:.4f} seconds."
+                    )
+
                 print(
-                    f"{model_name} completed in "
-                    f"{train_time:.4f} seconds."
+                    f"Training: {training_time:.4f} seconds."
+                )
+
+                print(
+                    f"Inference on the test set: "
+                    f"{inference_time:.4f} seconds."
                 )
                 print(f"Saved result: {result_path}")
 

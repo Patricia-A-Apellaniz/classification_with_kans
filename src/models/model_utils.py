@@ -5,6 +5,7 @@
 # Package imports
 import os
 import pickle
+import time
 
 from kan import *
 from scipy.stats import t
@@ -273,15 +274,33 @@ def load_saved_params(dataset_name, model_name, args):
     return params
 
 
-def fit_with_saved_params(model_name, dataset_name, x_train, y_train, args):
+def fit_with_saved_params(
+    model_name,
+    dataset_name,
+    x_train,
+    y_train,
+    args,
+):
     """Train one model with saved parameters, without GridSearchCV."""
     if model_name == 'nam' and len(np.unique(y_train)) > 2:
-        return None, None
-    params = load_saved_params(dataset_name, model_name, args)
+        return None, None, None, None
+
+    params = load_saved_params(
+        dataset_name,
+        model_name,
+        args,
+    )
+
     model, _ = get_model(model_name, default=False)
     model.set_params(**params)
+
+    start = time.perf_counter()
     model.fit(x_train, np.asarray(y_train).ravel())
-    return params, model
+    training_time = time.perf_counter() - start
+
+    hp_search_time = None
+
+    return params, model, hp_search_time, training_time
 
 
 def get_best_params(model_name, x_train, y_train, args):
@@ -289,7 +308,7 @@ def get_best_params(model_name, x_train, y_train, args):
     n_splits_cv = args['n_folds']
     n_classes = len(np.unique(y_train))
     if n_classes > 2 and model_name == 'nam':  # NAM does not support multiclass problems
-        return None, None
+        return None, None, None, None
     else:
         model, hyperparameters = get_model(model_name, default=False)
 
@@ -316,9 +335,24 @@ def get_best_params(model_name, x_train, y_train, args):
                                   error_score=0.0,
                                   verbose=4)
 
-        # Execute search
+        # Search includes cross-validation and refitting the best model.
+        start = time.perf_counter()
         result = search.fit(x_train, y_train.squeeze())
+        total_search_and_refit_time = time.perf_counter() - start
 
-        return result.best_params_, result.best_estimator_
+        # GridSearchCV records the time used to refit the best estimator.
+        training_time = result.refit_time_
+
+        # Search and cross-validation time, excluding the final refit.
+        hp_search_time = (
+            total_search_and_refit_time - training_time
+        )
+
+        return (
+            result.best_params_,
+            result.best_estimator_,
+            hp_search_time,
+            training_time,
+        )
 
 

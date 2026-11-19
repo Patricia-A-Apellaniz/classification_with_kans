@@ -153,7 +153,7 @@ def get_results_table(args):
                 )
                 numeric_metrics.append(mean)
 
-            train_time = result['train_time']
+            train_time = result['training_time']
             results_table.append(
                 [dataset, model_name, *formatted_metrics, train_time]
             )
