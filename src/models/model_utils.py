@@ -63,19 +63,39 @@ def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95):
         for k in m:
             all_metrics[k].append(m[k])
 
-    # Calculate mean and confidence intervals
+    # # Calculate mean and confidence intervals
+    # alpha = 1 - ci / 100
+    # t_val = t.ppf(1 - alpha / 2, df=n_bootstrap - 1)
+    # metrics_with_ci = {}
+    #
+    # for k, values in all_metrics.items():
+    #     values = np.array(values)
+    #     mean = np.mean(values)
+    #     std_err = np.std(values, ddof=1) / np.sqrt(n_bootstrap)
+    #     ci_range = t_val * std_err
+    #     metrics_with_ci[k] = {
+    #         'mean': mean,
+    #         f'CI_{ci}%': (mean - ci_range, mean + ci_range)
+    #     }
+    #
+    # return metrics_with_ci
+    # Calculate the bootstrap mean and percentile confidence interval
     alpha = 1 - ci / 100
-    t_val = t.ppf(1 - alpha / 2, df=n_bootstrap - 1)
+    lower_percentile = 100 * alpha / 2
+    upper_percentile = 100 * (1 - alpha / 2)
+
     metrics_with_ci = {}
 
     for k, values in all_metrics.items():
-        values = np.array(values)
+        values = np.asarray(values)
         mean = np.mean(values)
-        std_err = np.std(values, ddof=1) / np.sqrt(n_bootstrap)
-        ci_range = t_val * std_err
+        lower, upper = np.percentile(
+            values, [lower_percentile, upper_percentile]
+        )
+
         metrics_with_ci[k] = {
             'mean': mean,
-            f'CI_{ci}%': (mean - ci_range, mean + ci_range)
+            f'CI_{ci}%': (lower, upper)
         }
 
     return metrics_with_ci
