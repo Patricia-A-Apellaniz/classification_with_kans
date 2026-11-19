@@ -541,11 +541,22 @@ class Mlp_model:
     def get_params(self, deep=False):
         return self.hyperparameters
 
-    def set_params(self, hidden_layer_sizes=(32,), max_iter=10000, early_stopping=True, alpha=0.0001):
-        self.hyperparameters = {'hidden_layer_sizes': hidden_layer_sizes,
-                                'max_iter': max_iter,
-                                'early_stopping': early_stopping,
-                                'alpha': alpha}
+    def set_params(
+        self,
+        hidden_layer_sizes=(32,),
+        max_iter=10000,
+        early_stopping=True,
+        alpha=0.0001,
+    ):
+        self.hyperparameters = {
+            'hidden_layer_sizes': hidden_layer_sizes,
+            'max_iter': max_iter,
+            'early_stopping': early_stopping,
+            'alpha': alpha,
+        }
+
+        self.model = MLPClassifier(**self.hyperparameters)
+
         return self
 
     def run_model(self, x_train, y_train, x_test, y_test):

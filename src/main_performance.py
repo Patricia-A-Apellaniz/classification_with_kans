@@ -20,7 +20,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(parent_dir)
 from src.data import load_data
-from src.models.model_utils import get_best_params, get_bootstrap_metrics
+from src.models.model_utils import (
+    add_bootstrap_metrics,
+    fit_with_saved_params,
+    get_best_params,
+)
 from src.utils import get_config, get_results_table, get_p_values_from_table_data, create_results_folder
 
 
@@ -184,49 +188,176 @@ def get_box_plots(results_folder):
 
 
 if __name__ == '__main__':
-    # Get the configuration
     args = get_config('performance')
     create_results_folder(args['results_folder'], args)
 
     if args['train']:
         for dataset_name in args['datasets']:
-            # Load data
-            x_train, x_test, y_train, y_test = load_data(dataset_name, args)
+            x_train, x_test, y_train, y_test = load_data(
+                dataset_name,
+                args,
+            )
 
             for model_name in args['models']:
-                print(f"\n\nTraining {model_name}")
+                # Current NAM implementation does not support multiclass.
+                if (
+                    model_name == 'nam'
+                    and len(np.unique(y_train)) > 2
+                ):
+                    print(
+                        f"Skipping {model_name} on {dataset_name}: "
+                        "multiclass is not supported."
+                    )
+                    continue
+
+                result_path = os.path.join(
+                    args['results_folder'],
+                    dataset_name,
+                    model_name + '.pkl',
+                )
+
+                # Do not overwrite a previous run.
+                if os.path.exists(result_path):
+                    print(
+                        f"Result already exists; skipping: "
+                        f"{result_path}"
+                    )
+                    continue
+
+                print(
+                    f"\n\nTraining {model_name} "
+                    f"on {dataset_name}"
+                )
+
                 t0 = time.time()
-                best_params, best_model = get_best_params(model_name, x_train, y_train, args)
+
+                if args['hp_search']:
+                    print("Running hyperparameter search.")
+
+                    best_params, best_model = get_best_params(
+                        model_name,
+                        x_train,
+                        y_train,
+                        args,
+                    )
+                else:
+                    print("Using saved hyperparameters.")
+
+                    best_params, best_model = fit_with_saved_params(
+                        model_name,
+                        dataset_name,
+                        x_train,
+                        y_train,
+                        args,
+                    )
+
                 train_time = time.time() - t0
 
                 if best_model is None:
-                    metrics = get_bootstrap_metrics(y_test,
-                                                    y_test,
-                                                    np.ones((y_test.shape[0], len(np.unique(y_train)))) / len(
-                                                        np.unique(y_train)))
+                    print(
+                        f"No supported model was returned for "
+                        f"{dataset_name}/{model_name}."
+                    )
+                    continue
 
-                    # Set all metrics to -1 (flag value)
-                    metrics = {key: -1 for key in metrics.keys()}
-                    metrics['time'] = train_time
+                y_test_array = np.asarray(y_test).reshape(-1)
+                y_pred = np.asarray(
+                    best_model.predict(x_test)
+                ).reshape(-1)
+                y_proba = np.asarray(
+                    best_model.predict_proba(x_test)
+                )
+                classes = np.asarray(
+                    best_model.classes_
+                ).reshape(-1)
 
-                else:
-                    y_pred = best_model.predict(x_test)
-                    y_proba = best_model.predict_proba(x_test)
-                    # metrics = get_metrics(y_test, y_pred, y_proba)
-                    metrics = get_bootstrap_metrics(y_test, y_pred, y_proba)
-                    print(f"{model_name} trained in {train_time:.4f} seconds. Metrics:")
-                    print(metrics)
-                    metrics.update(best_params)
-                    metrics['dataset'] = dataset_name
-                    metrics['time'] = train_time
+                if y_proba.ndim != 2:
+                    raise ValueError(
+                        f"{dataset_name}/{model_name}: expected a "
+                        f"two-dimensional probability matrix, got "
+                        f"{y_proba.shape}."
+                    )
 
-                # Save the metrics
-                with open(os.path.join(args['results_folder'], dataset_name, model_name + '.pkl'), 'wb') as f:
-                    pickle.dump(metrics, f, protocol=pickle.HIGHEST_PROTOCOL)
+                if len(y_test_array) != len(y_pred):
+                    raise ValueError(
+                        f"{dataset_name}/{model_name}: y_test and "
+                        "y_pred have different lengths."
+                    )
 
-    #### Show results
-    results_table, table_col_names, results_table_no_ci = get_results_table(args)
-    get_box_plots(args['results_folder'])
-    mrr_all = get_mrr_models()  # Compute MRR for each metric among all models
-    get_mrr_datasets(mrr_all)  # Compute MRR for each model among all datasets
-    get_p_values()  # Get p-values to compare them with MRR values
+                if len(y_test_array) != y_proba.shape[0]:
+                    raise ValueError(
+                        f"{dataset_name}/{model_name}: y_test and "
+                        "y_proba have different numbers of rows."
+                    )
+
+                if y_proba.shape[1] != len(classes):
+                    raise ValueError(
+                        f"{dataset_name}/{model_name}: probability "
+                        "columns do not match the number of classes."
+                    )
+
+                result = {
+                    'dataset': dataset_name,
+                    'model': model_name,
+                    'y_test': y_test_array,
+                    'y_pred': y_pred,
+                    'y_proba': y_proba,
+                    'classes': classes,
+                    'hyperparameters': best_params,
+                    'train_time': train_time,
+                    'hp_search': args['hp_search'],
+                }
+
+                if args['calculate_bootstrap']:
+                    add_bootstrap_metrics(
+                        result,
+                        n_bootstrap=args['n_bootstrap'],
+                        ci=args['bootstrap_ci'],
+                    )
+
+                # Fail instead of overwriting if the path now exists.
+                with open(result_path, 'xb') as f:
+                    pickle.dump(
+                        result,
+                        f,
+                        protocol=pickle.HIGHEST_PROTOCOL,
+                    )
+
+                print(
+                    f"{model_name} completed in "
+                    f"{train_time:.4f} seconds."
+                )
+                print(f"Saved result: {result_path}")
+
+    # This part runs both after training and in read-only results mode.
+    (
+        results_table,
+        table_col_names,
+        results_table_no_ci,
+    ) = get_results_table(args)
+
+    expected_rows = sum(
+        1
+        for dataset in args['datasets']
+        for model_name in args['models']
+        if not (
+            model_name == 'nam'
+            and dataset not in [
+                'heart',
+                'obesity_bin',
+                'breast_cancer',
+            ]
+        )
+    )
+
+    if len(results_table) == expected_rows:
+        get_box_plots(args['results_folder'])
+        mrr_all = get_mrr_models()
+        get_mrr_datasets(mrr_all)
+        get_p_values()
+    else:
+        print(
+            "\nThe results table is incomplete: "
+            f"{len(results_table)} of {expected_rows} rows available. "
+            "Skipping rankings and statistical comparisons."
+        )

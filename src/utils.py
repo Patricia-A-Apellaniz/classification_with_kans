@@ -48,17 +48,37 @@ def get_config(task):
     else:
         args['datasets'] = [datasets]
 
-    # Set the path to the results folder
-    base_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    # Paths
+    base_folder = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..')
+    )
     args['base_folder'] = base_folder
     args['data_folder'] = os.path.join(base_folder, 'data')
-    results_folder = 'results_performance' if task == 'performance' else 'results_interpretability'
-    args['results_folder'] = os.path.join(base_folder, results_folder)
+    # Historical results contain the previously selected hyperparameters.
+    args['params_folder'] = os.path.join(base_folder, 'results_metrics')
 
-    # Training parameters
-    args['train'] = not True  # If True, train the models. If False, load the models from disk
-    args['n_folds'] = 3  # Number of folds for cross-validation
-    args['n_jobs'] = 1  # Number of jobs to run in parallel
+    if task == 'performance':
+        # New-format results are stored separately from historical files.
+        args['results_folder'] = os.path.join(
+            base_folder, 'results_metrics', 'current'
+        )
+    else:
+        args['results_folder'] = os.path.join(
+            base_folder, 'results_interpretability'
+        )
+
+    # Execution mode
+    args['train'] = False
+    args['hp_search'] = False
+
+    # Optional bootstrap calculation after prediction
+    args['calculate_bootstrap'] = True
+    args['n_bootstrap'] = 1000
+    args['bootstrap_ci'] = 95
+
+    # Hyperparameter search settings, used only when hp_search is True
+    args['n_folds'] = 3
+    args['n_jobs'] = 1
 
     # Interpretability parameters (representation info)
     args['n_dists'] = 5 # Representation parameter: threshold on the number of closest patients to show
@@ -74,52 +94,75 @@ def get_config(task):
 #####################################
 
 def get_results_table(args):
-    table_col_names = ['Dataset', 'Model', 'Accuracy', 'ROC-AUC', 'F1-Score', 'Precision', 'Recall', 'Time']
+    table_col_names = [
+        'Dataset', 'Model', 'Accuracy', 'ROC-AUC', 'F1-Score',
+        'Precision', 'Recall', 'Time',
+    ]
+    metric_names = ['accuracy', 'roc_auc', 'f1', 'precision', 'recall']
     results_table = []
     results_table_no_ci = []
+
     for dataset in args['datasets']:
         models = args['models'].copy()
+
+        # Current NAM implementation supports binary tasks only.
         if dataset not in ['heart', 'obesity_bin', 'breast_cancer']:
-            models.remove('nam')
+            if 'nam' in models:
+                models.remove('nam')
+
         for model_name in models:
-            # Load the metrics
-            with open(os.path.join(args['results_folder'], dataset, model_name + '.pkl'), 'rb') as f:
-                metrics = pickle.load(f)
+            result_path = os.path.join(
+                args['results_folder'], dataset, model_name + '.pkl',
+            )
+            if not os.path.isfile(result_path):
+                print(f"Result not found; skipping: {result_path}")
+                continue
+            with open(result_path, 'rb') as f:
+                result = pickle.load(f)
+            if 'metric_mean' not in result or 'metric_ci' not in result:
+                print(
+                    f"Bootstrap metrics not available in "
+                    f"{result_path}; skipping this row."
+                )
+                continue
+            if result.get('bootstrap', {}).get('ci') != 95:
+                print(
+                    f"A 95% bootstrap interval is not available in "
+                    f"{result_path}; skipping this row."
+                )
+                continue
+            means = result['metric_mean']
+            intervals = result['metric_ci']
+            missing_metrics = [
+                name for name in metric_names
+                if name not in means or name not in intervals
+            ]
+            if missing_metrics:
+                print(
+                    f"Missing metrics in {result_path}: "
+                    f"{missing_metrics}; skipping this row."
+                )
+                continue
+            formatted_metrics = []
+            numeric_metrics = []
+            for name in metric_names:
+                mean = float(means[name])
+                lower, upper = intervals[name]
+                formatted_metrics.append(
+                    f"{mean:.2f} ({float(lower):.3f}, {float(upper):.3f})"
+                )
+                numeric_metrics.append(mean)
 
-            # Approximate all metrics to two decimal places
-            no_ci_metrics = {'accuracy': 0.0, 'roc_auc': 0.0, 'f1_score': 0.0, 'precision': 0.0, 'recall': 0.0}
-            for key in ['accuracy', 'roc_auc', 'f1', 'precision', 'recall']:
-                # metrics[key] = np.round(metrics[key], 2)
-                no_ci_metrics[key] = metrics[key]['mean']
-                metrics[key] = str(np.round(metrics[key]['mean'], 2)) + " (" + str(
-                    np.round(metrics[key]['CI_95%'][0], 3)) + ", " + str(np.round(metrics[key]['CI_95%'][1], 3)) + ")"
+            train_time = result['train_time']
+            results_table.append(
+                [dataset, model_name, *formatted_metrics, train_time]
+            )
+            results_table_no_ci.append(
+                [dataset, model_name, *numeric_metrics, train_time]
+            )
 
-            # Add the avg time to the results
-            _, p = get_model(model_name)
-            l = [len(p[key]) for key in p.keys()]
-            avg_time = metrics['time'] / np.prod(l)
-            # print(f"Dataset: {dataset}, model: {model_name}, metrics: {metrics}")
-            results_table.append([dataset,
-                                  model_name,
-                                  metrics['accuracy'],
-                                  metrics['roc_auc'],
-                                  metrics['f1'],
-                                  metrics['precision'],
-                                  metrics['recall'],
-                                  avg_time])
-
-            results_table_no_ci.append([dataset,
-                                        model_name,
-                                        no_ci_metrics['accuracy'],
-                                        no_ci_metrics['roc_auc'],
-                                        no_ci_metrics['f1'],
-                                        no_ci_metrics['precision'],
-                                        no_ci_metrics['recall'],
-                                        avg_time])
     print('\n\n---------------Performance results---------------\n')
-    # print(tabulate(results_table, headers=table_col_names, tablefmt='latex', floatfmt=".2f"))
-    print(tabulate(results_table, headers=table_col_names, floatfmt=".2f"))
-
+    print(tabulate(results_table, headers=table_col_names, floatfmt='.2f'))
     return results_table, table_col_names, results_table_no_ci
 
 

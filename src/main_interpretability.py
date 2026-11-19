@@ -163,31 +163,43 @@ if __name__ == '__main__':
     create_results_folder(args['results_folder'], args)
 
     for dataset in args['datasets']:
-        # Check if the best model is saved
-        if os.path.exists(os.path.join(args['base_folder'], 'results_performance', dataset, 'kan_gam.pkl')):
-            with open(os.path.join(args['base_folder'], 'results_performance', dataset, 'kan_gam.pkl'), 'rb') as f:
-                metrics = pickle.load(f)
-            print(f"\n\n------------Model for dataset {dataset} found------------\nUsing the following parameters:")
-            for param in metrics:
-                if param not in ['accuracy', 'precision', 'recall', 'f1', 'roc_auc', 'time', 'dataset']:
-                    print(f"{param}: {metrics[param]}")
-            print('\n')
-            model = Kan_model(hidden_dim=metrics['hidden_dim'],
-                              batch_size=metrics['batch_size'],
-                              grid=metrics['grid'],
-                              k=metrics['k'],
-                              seed=metrics['seed'],
-                              lr=metrics['lr'],
-                              early_stop=metrics['early_stop'],
-                              steps=metrics['steps'],
-                              lamb=metrics['lamb'],
-                              lamb_entropy=metrics['lamb_entropy'],
-                              weight=metrics['weight'],
-                              sparse_init=metrics['sparse_init'],
-                              mult_kan=metrics['mult_kan'])
+        result_path = os.path.join(
+            args['params_folder'], dataset, 'kan_gam.pkl',
+        )
+
+        if os.path.exists(result_path):
+            with open(result_path, 'rb') as f:
+                saved_result = pickle.load(f)
+
+            # New results use a nested dictionary.
+            # Historical results store the parameters at the top level.
+            if 'hyperparameters' in saved_result:
+                params = saved_result['hyperparameters']
+            else:
+                parameter_names = [
+                    'hidden_dim', 'batch_size', 'grid', 'k', 'seed', 'lr',
+                    'early_stop', 'steps', 'lamb', 'lamb_entropy', 'weight',
+                    'sparse_init', 'mult_kan',
+                ]
+                params = {
+                    name: saved_result[name]
+                    for name in parameter_names
+                }
+
+            print(
+                f"\n\n------------Model parameters for "
+                f"{dataset} found------------"
+            )
+            for name, value in params.items():
+                print(f"{name}: {value}")
+            print()
+            model = Kan_model(**params)
         else:
             model = Kan_model()
-            print(f"Model for dataset {dataset} not found. Using default parameters.")
+            print(
+                f"Model parameters for dataset {dataset} not found. "
+                "Using default parameters."
+            )
 
         # Load the data and run model
         x_train, x_test, y_train, y_test = load_data(dataset, args)

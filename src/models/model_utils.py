@@ -3,6 +3,9 @@
 # Date: 05/08/2025
 
 # Package imports
+import os
+import pickle
+
 from kan import *
 from scipy.stats import t
 from sklearn.model_selection import GridSearchCV, KFold
@@ -101,6 +104,43 @@ def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95):
     return metrics_with_ci
 
 
+def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95):
+    """
+    Calculate bootstrap metrics from stored test predictions.
+
+    The result dictionary is updated in memory.
+    This function does not train a model or write to disk.
+    """
+    required_keys = ('y_test', 'y_pred', 'y_proba')
+
+    missing = [key for key in required_keys if key not in result]
+
+    if missing:
+        raise ValueError(
+            f"Cannot calculate bootstrap metrics. Missing keys: {missing}"
+        )
+
+    bootstrap_metrics = get_bootstrap_metrics(
+        result['y_test'], result['y_pred'], result['y_proba'],
+        n_bootstrap=n_bootstrap, ci=ci,
+    )
+    ci_key = f'CI_{ci}%'
+    result['metric_mean'] = {
+        metric_name: float(values['mean'])
+        for metric_name, values in bootstrap_metrics.items()
+    }
+    result['metric_ci'] = {
+        metric_name: (float(values[ci_key][0]), float(values[ci_key][1]))
+        for metric_name, values in bootstrap_metrics.items()
+    }
+    result['bootstrap'] = {
+        'n_bootstrap': n_bootstrap,
+        'ci': ci,
+        'method': 'percentile',
+    }
+    return result
+
+
 def get_params(model_name, default):
     if model_name == 'mlp':
         # MLP model parameters
@@ -193,6 +233,55 @@ def get_model(model_name, default=False):
         return NAMModel(), params
     else:
         raise ValueError(f"Model name {model_name} not found")
+
+
+def load_saved_params(dataset_name, model_name, args):
+    """
+    Load previously selected hyperparameters for one dataset and model.
+
+    Supports historical top-level parameters and the new nested format.
+    Only load pickle files from trusted sources.
+    """
+    result_path = os.path.join(
+        args['params_folder'], dataset_name, model_name + '.pkl',
+    )
+    if not os.path.isfile(result_path):
+        raise FileNotFoundError(
+            f"Saved hyperparameters were not found: {result_path}"
+        )
+    with open(result_path, 'rb') as f:
+        saved_result = pickle.load(f)
+    if not isinstance(saved_result, dict):
+        raise ValueError(f"Expected a dictionary in {result_path}.")
+
+    # The current model's parameter grid defines the accepted keys.
+    parameter_names = get_params(model_name, default=False).keys()
+    if 'hyperparameters' in saved_result:
+        source = saved_result['hyperparameters']
+    else:
+        source = saved_result
+    missing = [name for name in parameter_names if name not in source]
+    if missing:
+        raise ValueError(
+            f"Missing hyperparameters in {result_path}: {missing}"
+        )
+    params = {name: source[name] for name in parameter_names}
+
+    # JSON configurations introduced later may represent tuples as lists.
+    if model_name == 'mlp':
+        params['hidden_layer_sizes'] = tuple(params['hidden_layer_sizes'])
+    return params
+
+
+def fit_with_saved_params(model_name, dataset_name, x_train, y_train, args):
+    """Train one model with saved parameters, without GridSearchCV."""
+    if model_name == 'nam' and len(np.unique(y_train)) > 2:
+        return None, None
+    params = load_saved_params(dataset_name, model_name, args)
+    model, _ = get_model(model_name, default=False)
+    model.set_params(**params)
+    model.fit(x_train, np.asarray(y_train).ravel())
+    return params, model
 
 
 def get_best_params(model_name, x_train, y_train, args):
