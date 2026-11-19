@@ -415,15 +415,14 @@ class Kan_model:
         self.model.symbolic_enabled = old_symbolic_enabled
         return results
 
-    def run_model(self, x_train, x_test, y_train, y_test):
+    def run_model(self, x_train, x_test, y_train, y_test, verbose=0):
         self.set_model(x_train, x_test, y_train, y_test)
-
         # Train the model
         _ = self.custom_fit(self.dataset, batch=self.hyperparameters["batch_size"],
                             steps=self.hyperparameters["steps"], lamb=self.hyperparameters["lamb"],
                             lamb_entropy=self.hyperparameters["lamb_entropy"], lr=self.hyperparameters["lr"],
                             early_stop=self.hyperparameters["early_stop"], patience=30,
-                            save_fig=False, verbose=0)
+                            save_fig=False, verbose=verbose)
 
         return {'model': self.model,
                 'y_pred_proba': np.squeeze(self.predict_proba(self.x_test)),
