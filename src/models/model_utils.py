@@ -43,15 +43,16 @@ def get_metrics(y_true, y_pred, y_proba):
                 'roc_auc': roc_auc_score(y_true, y_proba, average='weighted', multi_class='ovo')}
 
 
-def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95):
+def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95, seed=0):
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
     y_proba = np.array(y_proba)
     original_classes = np.unique(y_true)
     metrics_list = []
+    rng = np.random.default_rng(seed)
 
     for _ in range(n_bootstrap):
-        indices = np.random.choice(len(y_true), len(y_true), replace=True)
+        indices = rng.choice(len(y_true), len(y_true), replace=True)
         y_true_sample = y_true[indices]
 
         # Check if all classes are present in the sample
@@ -106,7 +107,7 @@ def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95):
     return metrics_with_ci
 
 
-def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95):
+def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95, seed=0):
     """
     Calculate bootstrap metrics from stored test predictions.
 
@@ -124,7 +125,7 @@ def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95):
 
     bootstrap_metrics = get_bootstrap_metrics(
         result['y_test'], result['y_pred'], result['y_proba'],
-        n_bootstrap=n_bootstrap, ci=ci,
+        n_bootstrap=n_bootstrap, ci=ci, seed=seed,
     )
     ci_key = f'CI_{ci}%'
     result['metric_mean'] = {
@@ -139,6 +140,7 @@ def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95):
         'n_bootstrap': n_bootstrap,
         'ci': ci,
         'method': 'percentile',
+        'seed': seed,
     }
     return result
 

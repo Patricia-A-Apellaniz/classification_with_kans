@@ -8,11 +8,14 @@ import os
 import sys
 import time
 import pickle
+import tempfile
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import torch
+from joblib import Parallel, delayed, parallel_config
 
 from tueplots import bundles
 from tabulate import tabulate
@@ -192,6 +195,145 @@ def get_box_plots(results_folder):
         plt.close()
 
 
+def run_experiment(
+    dataset_name, train_size, model_name, x_train, y_train, x_test, y_test,
+    train_idx, test_idx, preprocessing, result_folder, args,
+):
+    torch.set_num_threads(1)
+    original_dir = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix='kan-experiment-') as work_dir:
+        try:
+            os.chdir(work_dir)
+            if (
+                model_name == 'nam'
+                and len(np.unique(y_train)) > 2
+            ):
+                print(
+                    f'Skipping multiclass NAM: '
+                    f'{dataset_name}, N={train_size}.'
+                )
+                return
+
+            result_path = os.path.join(
+                result_folder,
+                model_name + '.pkl',
+            )
+
+            if os.path.exists(result_path):
+                print(f'Result already exists: {result_path}')
+                return
+
+            print(
+                f'\nTraining {model_name} on '
+                f'{dataset_name}, N={train_size}.'
+            )
+
+            if args['hp_search']:
+                (
+                    best_params,
+                    best_model,
+                    hp_search_time,
+                    training_time,
+                ) = get_best_params(
+                    model_name,
+                    x_train,
+                    y_train,
+                    args,
+                )
+            else:
+                (
+                    best_params,
+                    best_model,
+                    hp_search_time,
+                    training_time,
+                ) = fit_with_saved_params(
+                    model_name,
+                    dataset_name,
+                    x_train,
+                    y_train,
+                    args,
+                    train_size,
+                )
+
+            if best_model is None:
+                print(
+                    f'No model returned for '
+                    f'{dataset_name}/{model_name}.'
+                )
+                return
+
+            start = time.perf_counter()
+
+            y_pred = np.asarray(
+                best_model.predict(x_test)
+            ).reshape(-1)
+
+            y_proba = np.asarray(
+                best_model.predict_proba(x_test)
+            )
+
+            inference_time = time.perf_counter() - start
+
+            classes = np.asarray(
+                best_model.classes_
+            ).reshape(-1)
+
+            if y_proba.ndim != 2:
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    f'invalid probability shape {y_proba.shape}.'
+                )
+
+            if y_proba.shape != (len(y_test), len(classes)):
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    'probabilities do not match test rows/classes.'
+                )
+
+            if len(y_pred) != len(y_test):
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    'predictions do not match test rows.'
+                )
+
+            result = {
+                'dataset': dataset_name,
+                'model': model_name,
+                'train_size': train_size,
+                'train_indices': train_idx,
+                'test_indices': test_idx,
+                'y_test': np.asarray(y_test).reshape(-1),
+                'y_pred': y_pred,
+                'y_proba': y_proba,
+                'classes': classes,
+                'hyperparameters': best_params,
+                'preprocessing': preprocessing,
+                'split_seed': args['split_seed'],
+                'hp_search': args['hp_search'],
+                'hp_search_time': hp_search_time,
+                'training_time': training_time,
+                'inference_time': inference_time,
+            }
+
+            if args['calculate_bootstrap']:
+                add_bootstrap_metrics(
+                    result,
+                    n_bootstrap=args['n_bootstrap'],
+                    ci=args['bootstrap_ci'],
+                )
+
+            with open(result_path, 'xb') as f:
+                pickle.dump(
+                    result,
+                    f,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+
+            print(f'Saved {result_path}')
+        finally:
+            os.chdir(original_dir)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -212,6 +354,7 @@ if __name__ == '__main__':
         )
 
     if args['train']:
+        tasks = []
         for dataset_name in args['datasets']:
             x, y = load_data(
                 dataset_name,
@@ -249,132 +392,17 @@ if __name__ == '__main__':
                 os.makedirs(result_folder, exist_ok=True)
 
                 for model_name in args['models']:
-                    if (
-                        model_name == 'nam'
-                        and len(np.unique(y_train)) > 2
-                    ):
-                        print(
-                            f'Skipping multiclass NAM: '
-                            f'{dataset_name}, N={train_size}.'
+                    tasks.append(
+                        delayed(run_experiment)(
+                            dataset_name, train_size, model_name,
+                            x_train, y_train, x_test, y_test,
+                            train_idx, test_idx, preprocessing,
+                            result_folder, args,
                         )
-                        continue
-
-                    result_path = os.path.join(
-                        result_folder,
-                        model_name + '.pkl',
                     )
 
-                    if os.path.exists(result_path):
-                        print(f'Result already exists: {result_path}')
-                        continue
-
-                    print(
-                        f'\nTraining {model_name} on '
-                        f'{dataset_name}, N={train_size}.'
-                    )
-
-                    if args['hp_search']:
-                        (
-                            best_params,
-                            best_model,
-                            hp_search_time,
-                            training_time,
-                        ) = get_best_params(
-                            model_name,
-                            x_train,
-                            y_train,
-                            args,
-                        )
-                    else:
-                        (
-                            best_params,
-                            best_model,
-                            hp_search_time,
-                            training_time,
-                        ) = fit_with_saved_params(
-                            model_name,
-                            dataset_name,
-                            x_train,
-                            y_train,
-                            args,
-                            train_size,
-                        )
-
-                    if best_model is None:
-                        print(
-                            f'No model returned for '
-                            f'{dataset_name}/{model_name}.'
-                        )
-                        continue
-
-                    start = time.perf_counter()
-
-                    y_pred = np.asarray(
-                        best_model.predict(x_test)
-                    ).reshape(-1)
-
-                    y_proba = np.asarray(
-                        best_model.predict_proba(x_test)
-                    )
-
-                    inference_time = time.perf_counter() - start
-
-                    classes = np.asarray(
-                        best_model.classes_
-                    ).reshape(-1)
-
-                    if y_proba.ndim != 2:
-                        raise ValueError(
-                            f'{dataset_name}/{model_name}: '
-                            f'invalid probability shape {y_proba.shape}.'
-                        )
-
-                    if y_proba.shape != (len(y_test), len(classes)):
-                        raise ValueError(
-                            f'{dataset_name}/{model_name}: '
-                            'probabilities do not match test rows/classes.'
-                        )
-
-                    if len(y_pred) != len(y_test):
-                        raise ValueError(
-                            f'{dataset_name}/{model_name}: '
-                            'predictions do not match test rows.'
-                        )
-
-                    result = {
-                        'dataset': dataset_name,
-                        'model': model_name,
-                        'train_size': train_size,
-                        'train_indices': train_idx,
-                        'test_indices': test_idx,
-                        'y_test': np.asarray(y_test).reshape(-1),
-                        'y_pred': y_pred,
-                        'y_proba': y_proba,
-                        'classes': classes,
-                        'hyperparameters': best_params,
-                        'preprocessing': preprocessing,
-                        'split_seed': args['split_seed'],
-                        'hp_search': args['hp_search'],
-                        'hp_search_time': hp_search_time,
-                        'training_time': training_time,
-                        'inference_time': inference_time,
-                    }
-
-                    if args['calculate_bootstrap']:
-                        add_bootstrap_metrics(
-                            result,
-                            n_bootstrap=args['n_bootstrap'],
-                            ci=args['bootstrap_ci'],
-                        )
-
-                    with open(result_path, 'xb') as f:
-                        pickle.dump(
-                            result,
-                            f,
-                            protocol=pickle.HIGHEST_PROTOCOL,
-                        )
-
-                    print(f'Saved {result_path}')
+        with parallel_config(backend='loky', inner_max_num_threads=1):
+            Parallel(n_jobs=args['experiment_jobs'])(tasks)
 
     # Read one table per size, including when train=False.
     available_sizes = sorted({
