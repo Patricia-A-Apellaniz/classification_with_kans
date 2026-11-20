@@ -103,6 +103,7 @@ def get_config(task):
     args['calculate_bootstrap'] = True
     args['n_bootstrap'] = 1000
     args['bootstrap_ci'] = 95
+    args['ece_bins'] = 10
 
     # Hyperparameter search settings, used only when hp_search is True
     args['n_folds'] = 3
@@ -188,6 +189,112 @@ def get_results_table(args):
     print('\n\n---------------Performance results---------------\n')
     print(tabulate(results_table, headers=table_col_names, floatfmt='.2f'))
     return results_table, table_col_names, results_table_no_ci
+
+
+def get_calibration_tables(args):
+    """
+    Print calibration summary and classwise ECE tables.
+
+    Expects args['results_folder'] to point to one sample-size folder,
+    just like get_results_table.
+    """
+    summary_rows = []
+    classwise_rows = []
+
+    def format_metric(result, name):
+        means = result.get('metric_mean', {})
+        intervals = result.get('metric_ci', {})
+
+        if name not in means or name not in intervals:
+            return 'N/A'
+
+        mean = float(means[name])
+        lower, upper = intervals[name]
+
+        return (
+            f'{mean:.3f} '
+            f'({float(lower):.3f}, {float(upper):.3f})'
+        )
+
+    for dataset in args['datasets']:
+        for model_name in args['models']:
+            result_path = os.path.join(
+                args['results_folder'],
+                dataset,
+                model_name + '.pkl',
+            )
+
+            if not os.path.isfile(result_path):
+                continue
+
+            with open(result_path, 'rb') as f:
+                result = pickle.load(f)
+
+            if result.get('bootstrap', {}).get('ci') != 95:
+                continue
+
+            if 'classes' not in result:
+                continue
+
+            classes = np.asarray(result['classes']).reshape(-1)
+
+            if len(classes) == 2:
+                ece_name = 'ece'
+                ece_type = f'Positive class: {classes[1]}'
+            else:
+                ece_name = 'ece_macro'
+                ece_type = 'Classwise macro'
+
+            summary_rows.append([
+                dataset,
+                model_name,
+                ece_type,
+                format_metric(result, ece_name),
+                format_metric(result, 'brier'),
+                format_metric(result, 'log_loss'),
+            ])
+
+            if len(classes) > 2:
+                for class_index, class_label in enumerate(classes):
+                    classwise_rows.append([
+                        dataset,
+                        model_name,
+                        class_label,
+                        format_metric(
+                            result,
+                            f'ece_class_{class_index}',
+                        ),
+                    ])
+
+    print('\n---------------Calibration summary---------------\n')
+    print(
+        tabulate(
+            summary_rows,
+            headers=[
+                'Dataset',
+                'Model',
+                'ECE definition',
+                'ECE',
+                'Brier',
+                'Log loss',
+            ],
+        )
+    )
+
+    print('\n---------------Classwise ECE---------------\n')
+    print(
+        tabulate(
+            classwise_rows,
+            headers=[
+                'Dataset',
+                'Model',
+                'Class',
+                'ECE',
+            ],
+        )
+    )
+
+    return summary_rows, classwise_rows
 
 
 def friedman_test(all_data, comp_index, alpha, higher_is_better):

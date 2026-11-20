@@ -33,7 +33,13 @@ from src.models.model_utils import (
     fit_with_saved_params,
     get_best_params,
 )
-from src.utils import get_config, get_results_table, get_p_values_from_table_data, create_results_folder
+from src.utils import (
+    create_results_folder,
+    get_calibration_tables,
+    get_config,
+    get_p_values_from_table_data,
+    get_results_table,
+)
 
 
 def get_mrr_datasets(mrr_all_elements):
@@ -313,6 +319,7 @@ def run_experiment(
                     result,
                     n_bootstrap=args['n_bootstrap'],
                     ci=args['bootstrap_ci'],
+                    n_bins=args['ece_bins'],
                 )
 
             with open(result_path, 'xb') as f:
@@ -422,3 +429,4 @@ if __name__ == '__main__':
 
         print(f'\nResults for training size N={train_size}')
         get_results_table(table_args)
+        get_calibration_tables(table_args)

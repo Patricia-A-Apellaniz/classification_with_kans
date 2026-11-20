@@ -22,133 +22,392 @@ from lightgbm import LGBMClassifier
 from src.models.models import Mlp_model, LogisticRegressionModel, RandomForestModel, Kan_model, NAMModel
 
 
-def get_metrics(y_true, y_pred, y_proba):
-    y_true = np.squeeze(y_true)
-    y_pred = np.squeeze(y_pred)
-    y_proba = np.squeeze(y_proba)
+def expected_calibration_error(y_binary, probabilities, n_bins=10):
+    """
+    Classwise ECE using equal-width bins on [0, 1].
 
-    binary = False
-    if len(y_proba.shape) == 1:
-        binary = True
-    elif y_proba.shape[1] <= 2:
-        binary = True
-        if y_proba.shape[1] == 2:
-            y_proba = y_proba[:, 1]
+    y_binary contains 0/1 indicators for one class.
+    probabilities contains the predicted probability for that class.
+    """
+    y_binary = np.asarray(y_binary).reshape(-1)
+    probabilities = np.asarray(
+        probabilities,
+        dtype=float,
+    ).reshape(-1)
 
-    # Check for the right method to apply
-    if binary:  # Binary classification
-        return {'accuracy': accuracy_score(y_true, y_pred),
-                'precision': precision_score(y_true, y_pred, zero_division=0),
-                'recall': recall_score(y_true, y_pred, zero_division=0),
-                'f1': f1_score(y_true, y_pred, zero_division=0),
-                'roc_auc': roc_auc_score(y_true, y_proba)}
-    else:  # Multiclass classification
-        return {'accuracy': accuracy_score(y_true, y_pred),
-                'precision': precision_score(y_true, y_pred, average='weighted', zero_division=0),
-                'recall': recall_score(y_true, y_pred, average='weighted', zero_division=0),
-                'f1': f1_score(y_true, y_pred, average='weighted', zero_division=0),
-                'roc_auc': roc_auc_score(y_true, y_proba, average='weighted', multi_class='ovo')}
+    if len(y_binary) == 0:
+        raise ValueError('ECE requires at least one observation.')
+
+    if len(y_binary) != len(probabilities):
+        raise ValueError(
+            'ECE labels and probabilities have different lengths.'
+        )
+
+    if not isinstance(n_bins, int) or n_bins < 1:
+        raise ValueError('n_bins must be a positive integer.')
+
+    # Values equal to 1 are included in the final bin.
+    bin_indices = np.minimum(
+        (probabilities * n_bins).astype(int),
+        n_bins - 1,
+    )
+
+    ece = 0.0
+
+    for bin_index in range(n_bins):
+        mask = bin_indices == bin_index
+
+        if not np.any(mask):
+            continue
+
+        mean_probability = probabilities[mask].mean()
+        observed_frequency = y_binary[mask].mean()
+
+        ece += (
+            mask.sum() / len(y_binary)
+            * abs(observed_frequency - mean_probability)
+        )
+
+    return float(ece)
 
 
-def get_bootstrap_metrics(y_true, y_pred, y_proba, n_bootstrap=1000, ci=95, seed=0):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-    y_proba = np.array(y_proba)
-    original_classes = np.unique(y_true)
+def get_metrics(
+    y_true,
+    y_pred,
+    y_proba,
+    classes=None,
+    n_bins=10,
+):
+    """
+    Calculate classification and calibration metrics.
+
+    If y_proba is one-dimensional, it is interpreted as the
+    probability of the positive class in a binary problem.
+
+    For a probability matrix, columns must follow the order in classes.
+    """
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.asarray(y_pred).reshape(-1)
+    y_proba = np.asarray(y_proba, dtype=float)
+
+    if len(y_true) == 0:
+        raise ValueError('Metrics require at least one observation.')
+
+    if len(y_pred) != len(y_true):
+        raise ValueError('y_true and y_pred have different lengths.')
+
+    if classes is None:
+        classes = np.unique(y_true)
+    else:
+        classes = np.asarray(classes).reshape(-1)
+
+    if len(classes) < 2:
+        raise ValueError('Metrics require at least two classes.')
+
+    if not np.array_equal(classes, np.unique(classes)):
+        raise ValueError(
+            'classes must contain unique labels in sorted order.'
+        )
+
+    if not np.array_equal(np.unique(y_true), classes):
+        raise ValueError(
+            'The classes in y_true do not match the supplied classes.'
+        )
+
+    if not np.all(np.isin(y_pred, classes)):
+        raise ValueError(
+            'y_pred contains labels that are not present in classes.'
+        )
+
+    if y_proba.ndim == 1:
+        if len(classes) != 2:
+            raise ValueError(
+                'A one-dimensional probability array requires '
+                'a binary problem.'
+            )
+
+        y_proba = np.column_stack(
+            (1.0 - y_proba, y_proba)
+        )
+
+    if y_proba.ndim != 2:
+        raise ValueError(
+            f'Expected a probability matrix, got shape {y_proba.shape}.'
+        )
+
+    if y_proba.shape != (len(y_true), len(classes)):
+        raise ValueError(
+            'Probability matrix shape does not match '
+            'the number of observations and classes.'
+        )
+
+    if not np.isfinite(y_proba).all():
+        raise ValueError('Probabilities contain NaN or infinite values.')
+
+    if np.any(y_proba < 0) or np.any(y_proba > 1):
+        raise ValueError('Probabilities must be between 0 and 1.')
+
+    if not np.allclose(y_proba.sum(axis=1), 1.0, atol=1e-6):
+        raise ValueError('Each row of probabilities must sum to 1.')
+
+    n_classes = len(classes)
+
+    indicators = (
+        y_true[:, None] == classes[None, :]
+    ).astype(float)
+
+    classwise_ece = [
+        expected_calibration_error(
+            indicators[:, class_index],
+            y_proba[:, class_index],
+            n_bins=n_bins,
+        )
+        for class_index in range(n_classes)
+    ]
+
+    if n_classes == 2:
+        positive_y = indicators[:, 1]
+        positive_proba = y_proba[:, 1]
+
+        metrics = {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(
+                y_true,
+                y_pred,
+                pos_label=classes[1],
+                zero_division=0,
+            ),
+            'recall': recall_score(
+                y_true,
+                y_pred,
+                pos_label=classes[1],
+                zero_division=0,
+            ),
+            'f1': f1_score(
+                y_true,
+                y_pred,
+                pos_label=classes[1],
+                zero_division=0,
+            ),
+            'roc_auc': roc_auc_score(
+                positive_y,
+                positive_proba,
+            ),
+            'ece': classwise_ece[1],
+            'brier': np.mean(
+                (positive_proba - positive_y) ** 2
+            ),
+        }
+
+    else:
+        metrics = {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(
+                y_true,
+                y_pred,
+                average='weighted',
+                zero_division=0,
+            ),
+            'recall': recall_score(
+                y_true,
+                y_pred,
+                average='weighted',
+                zero_division=0,
+            ),
+            'f1': f1_score(
+                y_true,
+                y_pred,
+                average='weighted',
+                zero_division=0,
+            ),
+            'roc_auc': roc_auc_score(
+                y_true,
+                y_proba,
+                labels=classes,
+                average='weighted',
+                multi_class='ovo',
+            ),
+            'ece_macro': np.mean(classwise_ece),
+            'brier': np.mean(
+                np.sum((y_proba - indicators) ** 2, axis=1)
+            ),
+        }
+
+    # The index in each key corresponds to the position in classes.
+    for class_index, value in enumerate(classwise_ece):
+        metrics[f'ece_class_{class_index}'] = value
+
+    # Clip only for log loss to avoid log(0).
+    epsilon = np.finfo(float).eps
+    clipped_proba = np.clip(y_proba, epsilon, 1.0)
+
+    metrics['log_loss'] = -np.mean(
+        np.sum(indicators * np.log(clipped_proba), axis=1)
+    )
+
+    return {
+        name: float(value)
+        for name, value in metrics.items()
+    }
+
+
+def get_bootstrap_metrics(
+    y_true,
+    y_pred,
+    y_proba,
+    n_bootstrap=1000,
+    ci=95,
+    seed=0,
+    classes=None,
+    n_bins=10,
+    return_valid_count=False,
+):
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.asarray(y_pred).reshape(-1)
+    y_proba = np.asarray(y_proba)
+
+    if classes is None:
+        classes = np.unique(y_true)
+    else:
+        classes = np.asarray(classes).reshape(-1)
+
+    if n_bootstrap < 1:
+        raise ValueError('n_bootstrap must be at least 1.')
+
+    # Validate the original data and probability/class alignment.
+    get_metrics(
+        y_true,
+        y_pred,
+        y_proba,
+        classes=classes,
+        n_bins=n_bins,
+    )
+
     metrics_list = []
     rng = np.random.default_rng(seed)
 
     for _ in range(n_bootstrap):
-        indices = rng.choice(len(y_true), len(y_true), replace=True)
+        indices = rng.choice(
+            len(y_true),
+            len(y_true),
+            replace=True,
+        )
+
         y_true_sample = y_true[indices]
 
-        # Check if all classes are present in the sample
-        if not np.all(np.isin(original_classes, np.unique(y_true_sample))):
-            continue  # Skip this iteration if not all classes are present
+        # AUC and the current metric implementation require all classes.
+        if not np.array_equal(np.unique(y_true_sample), classes):
+            continue
 
-        sample_metrics = get_metrics(y_true_sample, y_pred[indices], y_proba[indices])
+        sample_metrics = get_metrics(
+            y_true_sample,
+            y_pred[indices],
+            y_proba[indices],
+            classes=classes,
+            n_bins=n_bins,
+        )
+
         metrics_list.append(sample_metrics)
 
-    # Group metrics by name
-    metric_names = metrics_list[0].keys()
-    all_metrics = {k: [] for k in metric_names}
-    for m in metrics_list:
-        for k in m:
-            all_metrics[k].append(m[k])
+    if not metrics_list:
+        raise ValueError(
+            'No valid bootstrap samples contained all classes.'
+        )
 
-    # # Calculate mean and confidence intervals
-    # alpha = 1 - ci / 100
-    # t_val = t.ppf(1 - alpha / 2, df=n_bootstrap - 1)
-    # metrics_with_ci = {}
-    #
-    # for k, values in all_metrics.items():
-    #     values = np.array(values)
-    #     mean = np.mean(values)
-    #     std_err = np.std(values, ddof=1) / np.sqrt(n_bootstrap)
-    #     ci_range = t_val * std_err
-    #     metrics_with_ci[k] = {
-    #         'mean': mean,
-    #         f'CI_{ci}%': (mean - ci_range, mean + ci_range)
-    #     }
-    #
-    # return metrics_with_ci
-    # Calculate the bootstrap mean and percentile confidence interval
+    metric_names = metrics_list[0].keys()
+
+    all_metrics = {
+        name: [sample[name] for sample in metrics_list]
+        for name in metric_names
+    }
+
     alpha = 1 - ci / 100
     lower_percentile = 100 * alpha / 2
     upper_percentile = 100 * (1 - alpha / 2)
 
     metrics_with_ci = {}
 
-    for k, values in all_metrics.items():
+    for name, values in all_metrics.items():
         values = np.asarray(values)
-        mean = np.mean(values)
+
         lower, upper = np.percentile(
-            values, [lower_percentile, upper_percentile]
+            values,
+            [lower_percentile, upper_percentile],
         )
 
-        metrics_with_ci[k] = {
-            'mean': mean,
-            f'CI_{ci}%': (lower, upper)
+        metrics_with_ci[name] = {
+            'mean': float(np.mean(values)),
+            f'CI_{ci}%': (float(lower), float(upper)),
         }
+
+    if return_valid_count:
+        return metrics_with_ci, len(metrics_list)
 
     return metrics_with_ci
 
 
-def add_bootstrap_metrics(result, n_bootstrap=1000, ci=95, seed=0):
+def add_bootstrap_metrics(
+    result,
+    n_bootstrap=1000,
+    ci=95,
+    seed=0,
+    n_bins=10,
+):
     """
     Calculate bootstrap metrics from stored test predictions.
 
-    The result dictionary is updated in memory.
-    This function does not train a model or write to disk.
+    The result is updated in memory. No model is trained and
+    no file is written by this function.
     """
-    required_keys = ('y_test', 'y_pred', 'y_proba')
+    required_keys = ('y_test', 'y_pred', 'y_proba', 'classes')
 
-    missing = [key for key in required_keys if key not in result]
+    missing = [
+        key
+        for key in required_keys
+        if key not in result
+    ]
 
     if missing:
         raise ValueError(
-            f"Cannot calculate bootstrap metrics. Missing keys: {missing}"
+            f'Cannot calculate bootstrap metrics. Missing keys: {missing}'
         )
 
-    bootstrap_metrics = get_bootstrap_metrics(
-        result['y_test'], result['y_pred'], result['y_proba'],
-        n_bootstrap=n_bootstrap, ci=ci, seed=seed,
+    bootstrap_metrics, n_valid = get_bootstrap_metrics(
+        result['y_test'],
+        result['y_pred'],
+        result['y_proba'],
+        n_bootstrap=n_bootstrap,
+        ci=ci,
+        seed=seed,
+        classes=result['classes'],
+        n_bins=n_bins,
+        return_valid_count=True,
     )
+
     ci_key = f'CI_{ci}%'
+
     result['metric_mean'] = {
         metric_name: float(values['mean'])
         for metric_name, values in bootstrap_metrics.items()
     }
+
     result['metric_ci'] = {
-        metric_name: (float(values[ci_key][0]), float(values[ci_key][1]))
+        metric_name: (
+            float(values[ci_key][0]),
+            float(values[ci_key][1]),
+        )
         for metric_name, values in bootstrap_metrics.items()
     }
+
     result['bootstrap'] = {
         'n_bootstrap': n_bootstrap,
+        'n_valid': n_valid,
         'ci': ci,
         'method': 'percentile',
         'seed': seed,
+        'ece_bins': n_bins,
     }
+
     return result
 
 
