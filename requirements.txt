@@ -1,6 +1,6 @@
 pandas
 numpy
-scikit-learn
+scikit-learn==1.7
 pykan
 matplotlib
 torch
@@ -14,3 +14,6 @@ ipywidgets
 statsmodels
 tueplots
 seaborn
+interpret
+xgboost
+lightgbm

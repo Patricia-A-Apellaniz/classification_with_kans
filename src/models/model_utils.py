@@ -10,8 +10,15 @@ import json
 
 from kan import *
 from scipy.stats import t
-from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection import (
+    GridSearchCV,
+    KFold,
+    StratifiedKFold,
+)
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from interpret.glassbox import ExplainableBoostingClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 from src.models.models import Mlp_model, LogisticRegressionModel, RandomForestModel, Kan_model, NAMModel
 
 
@@ -212,6 +219,35 @@ def get_params(model_name, default):
                   'num_basis_functions': [32, 64, 128],
                   'hidden_size': [[64, 32], [128, 64]],
                   }
+    elif model_name == 'ebm':
+        params = {
+            'interactions': [0, 5],
+            'learning_rate': [0.01, 0.05],
+            'max_leaves': [2, 3],
+            'max_rounds': [500],
+            'outer_bags': [4],
+            'random_state': [0],
+            'n_jobs': [1],
+        }
+
+    elif model_name == 'xgboost':
+        params = {
+            'n_estimators': [100, 300],
+            'max_depth': [3, 6],
+            'learning_rate': [0.05, 0.1],
+            'random_state': [0],
+            'n_jobs': [1],
+        }
+
+    elif model_name == 'lightgbm':
+        params = {
+            'n_estimators': [100, 300],
+            'num_leaves': [15, 31],
+            'learning_rate': [0.05, 0.1],
+            'random_state': [0],
+            'n_jobs': [1],
+            'verbosity': [-1],
+        }
     else:
         raise ValueError(f"Model name {model_name} not recognized")
 
@@ -235,6 +271,12 @@ def get_model(model_name, default=False):
         return Kan_model(), params
     elif model_name == 'nam':
         return NAMModel(), params
+    elif model_name == 'ebm':
+        return ExplainableBoostingClassifier(), params
+    elif model_name == 'xgboost':
+        return XGBClassifier(), params
+    elif model_name == 'lightgbm':
+        return LGBMClassifier(), params
     else:
         raise ValueError(f"Model name {model_name} not found")
 
@@ -278,21 +320,33 @@ def load_saved_params(dataset_name, model_name, args):
 
 
 def load_configured_params(dataset_name, model_name, train_size, args):
-    path = os.path.join(
-        args['config_folder'],
-        dataset_name,
-        model_name + '.json',
-    )
-
-    with open(path, encoding='utf-8') as f:
-        configurations = json.load(f)
-
-    params = configurations[str(train_size)]
-
-    if model_name == 'mlp':
-        params['hidden_layer_sizes'] = tuple(
-            params['hidden_layer_sizes']
+    if model_name in {'ebm', 'xgboost', 'lightgbm'}:
+        path = os.path.join(
+            args['config_folder'],
+            dataset_name,
+            model_name,
+            f'{train_size}.json',
         )
+
+        with open(path, encoding='utf-8') as f:
+            params = json.load(f)
+
+    else:
+        path = os.path.join(
+            args['config_folder'],
+            dataset_name,
+            model_name + '.json',
+        )
+
+        with open(path, encoding='utf-8') as f:
+            configurations = json.load(f)
+
+        params = configurations[str(train_size)]
+
+        if model_name == 'mlp':
+            params['hidden_layer_sizes'] = tuple(
+                params['hidden_layer_sizes']
+            )
 
     return params
 
@@ -338,7 +392,24 @@ def get_best_params(model_name, x_train, y_train, args):
         model, hyperparameters = get_model(model_name, default=False)
 
         # Configure the cross-validation procedure for parameter tuning
-        cv_inner = KFold(n_splits=n_splits_cv, shuffle=True, random_state=0)
+        if model_name in {'ebm', 'xgboost', 'lightgbm'}:
+            cv_inner = StratifiedKFold(
+                n_splits=n_splits_cv,
+                shuffle=True,
+                random_state=0,
+            )
+        else:
+            cv_inner = KFold(
+                n_splits=n_splits_cv,
+                shuffle=True,
+                random_state=0,
+            )
+
+        error_score = (
+            'raise'
+            if model_name in {'ebm', 'xgboost', 'lightgbm'}
+            else 0.0
+        )
 
         # Define search
         if n_classes > 2:  # Multiclass problem
@@ -348,7 +419,7 @@ def get_best_params(model_name, x_train, y_train, args):
                                   refit='f1_weighted',
                                   cv=cv_inner,
                                   n_jobs=n_jobs,
-                                  error_score=0.0,
+                                  error_score=error_score,
                                   verbose=4)  # Other option: roc_auc_ovo_weighted
         else:  # Binary problem
             search = GridSearchCV(model,
@@ -357,7 +428,7 @@ def get_best_params(model_name, x_train, y_train, args):
                                   refit='f1',
                                   cv=cv_inner,
                                   n_jobs=n_jobs,
-                                  error_score=0.0,
+                                  error_score=error_score,
                                   verbose=4)
 
         # Search includes cross-validation and refitting the best model.

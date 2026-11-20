@@ -163,7 +163,10 @@ def get_box_plots(results_folder):
                                    'rf': 'RF',
                                    'nam': 'NAM',
                                    'kan': 'Logistic-KAN',
-                                   'kan_gam': 'KAAM'})
+                                   'kan_gam': 'KAAM',
+                                   'ebm': 'EBM',
+                                   'xgboost': 'XGBoost',
+                                   'lightgbm': 'LightGBM'})
     with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
         plt.figure(figsize=(6.5, 2))
         palette = sns.color_palette("tab10")

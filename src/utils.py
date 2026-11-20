@@ -33,12 +33,25 @@ def get_config(task):
     args = {}
 
     # Model selection
-    # Options are 'all', 'mlp', 'lr', 'rf', 'nam', 'kan', 'kan_gam'
+    # Options are 'all', 'mlp', 'lr', 'rf', 'nam', 'kan', 'kan_gam', 'ebm', 'xgboost', 'lightgbm'
     models = 'all'
+
     if models == 'all':
-        args['models'] = ['mlp', 'lr', 'rf', 'nam', 'kan', 'kan_gam']
-    else:
+        args['models'] = [
+            'mlp',
+            'lr',
+            'rf',
+            'nam',
+            'kan',
+            'kan_gam',
+            'ebm',
+            'xgboost',
+            'lightgbm',
+        ]
+    elif isinstance(models, str):
         args['models'] = [models]
+    else:
+        args['models'] = list(models)
 
     # Dataset selection
     # Options are 'all', 'heart', 'diabetes_h', 'diabetes_130', 'obesity', 'obesity_bin', 'breast_cancer'
