@@ -37,6 +37,7 @@ from src.utils import (
     create_results_folder,
     get_calibration_tables,
     get_config,
+    get_multiclass_table,
     get_p_values_from_table_data,
     get_results_table,
 )
@@ -430,3 +431,4 @@ if __name__ == '__main__':
         print(f'\nResults for training size N={train_size}')
         get_results_table(table_args)
         get_calibration_tables(table_args)
+        get_multiclass_table(table_args)

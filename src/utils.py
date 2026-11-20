@@ -297,6 +297,119 @@ def get_calibration_tables(args):
     return summary_rows, classwise_rows
 
 
+def get_multiclass_table(args):
+    """
+    Print a separate table with multiclass classification metrics.
+
+    Precision and recall are displayed in the same order as the
+    class labels stored in each result.
+    """
+    rows = []
+    class_orders = {}
+
+    def format_metric(result, name):
+        means = result.get('metric_mean', {})
+        intervals = result.get('metric_ci', {})
+
+        if name not in means or name not in intervals:
+            return 'N/A'
+
+        mean = float(means[name])
+        lower, upper = intervals[name]
+
+        return (
+            f'{mean:.3f} '
+            f'({float(lower):.3f}, {float(upper):.3f})'
+        )
+
+    for dataset in args['datasets']:
+        for model_name in args['models']:
+            result_path = os.path.join(
+                args['results_folder'],
+                dataset,
+                model_name + '.pkl',
+            )
+
+            if not os.path.isfile(result_path):
+                continue
+
+            with open(result_path, 'rb') as f:
+                result = pickle.load(f)
+
+            if result.get('bootstrap', {}).get('ci') != 95:
+                continue
+
+            if 'classes' not in result:
+                continue
+
+            classes = np.asarray(result['classes']).reshape(-1)
+
+            # This complementary table is only for multiclass tasks.
+            if len(classes) <= 2:
+                continue
+
+            if dataset in class_orders:
+                if not np.array_equal(class_orders[dataset], classes):
+                    raise ValueError(
+                        f'Inconsistent class order for {dataset}: '
+                        f'{result_path}'
+                    )
+            else:
+                class_orders[dataset] = classes.copy()
+
+            precision_values = [
+                format_metric(
+                    result,
+                    f'precision_class_{class_index}',
+                )
+                for class_index in range(len(classes))
+            ]
+
+            recall_values = [
+                format_metric(
+                    result,
+                    f'recall_class_{class_index}',
+                )
+                for class_index in range(len(classes))
+            ]
+
+            rows.append([
+                dataset,
+                model_name,
+                format_metric(result, 'f1_macro'),
+                format_metric(result, 'balanced_accuracy'),
+                ' / '.join(precision_values),
+                ' / '.join(recall_values),
+            ])
+
+    print('\n---------------Multiclass classification---------------\n')
+
+    if class_orders:
+        print('Class order for precision and recall:')
+
+        for dataset, classes in class_orders.items():
+            labels = ' / '.join(str(label) for label in classes)
+            print(f'  {dataset}: {labels}')
+
+        print()
+
+    print(
+        tabulate(
+            rows,
+            headers=[
+                'Dataset',
+                'Model',
+                'Macro-F1',
+                'Balanced accuracy',
+                'Precision by class',
+                'Recall by class',
+            ],
+        )
+    )
+
+    return rows
+
+
 def friedman_test(all_data, comp_index, alpha, higher_is_better):
     """
     Perform the Friedman test on the provided data. Based on Demsar06.

@@ -15,7 +15,15 @@ from sklearn.model_selection import (
     KFold,
     StratifiedKFold,
 )
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    precision_recall_fscore_support,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from interpret.glassbox import ExplainableBoostingClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
@@ -232,6 +240,37 @@ def get_metrics(
                 np.sum((y_proba - indicators) ** 2, axis=1)
             ),
         }
+
+        precision_by_class, recall_by_class, _, _ = (
+            precision_recall_fscore_support(
+                y_true,
+                y_pred,
+                labels=classes,
+                average=None,
+                zero_division=0,
+            )
+        )
+
+        metrics['f1_macro'] = f1_score(
+            y_true,
+            y_pred,
+            labels=classes,
+            average='macro',
+            zero_division=0,
+        )
+
+        metrics['balanced_accuracy'] = balanced_accuracy_score(
+            y_true,
+            y_pred,
+        )
+
+        for class_index in range(n_classes):
+            metrics[f'precision_class_{class_index}'] = (
+                precision_by_class[class_index]
+            )
+            metrics[f'recall_class_{class_index}'] = (
+                recall_by_class[class_index]
+            )
 
     # The index in each key corresponds to the position in classes.
     for class_index, value in enumerate(classwise_ece):
