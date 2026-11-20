@@ -207,16 +207,6 @@ def run_experiment(
     with tempfile.TemporaryDirectory(prefix='kan-experiment-') as work_dir:
         try:
             os.chdir(work_dir)
-            if (
-                model_name == 'nam'
-                and len(np.unique(y_train)) > 2
-            ):
-                print(
-                    f'Skipping multiclass NAM: '
-                    f'{dataset_name}, N={train_size}.'
-                )
-                return
-
             result_path = os.path.join(
                 result_folder,
                 model_name + '.pkl',

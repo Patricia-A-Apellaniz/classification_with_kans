@@ -134,11 +134,6 @@ def get_results_table(args):
     for dataset in args['datasets']:
         models = args['models'].copy()
 
-        # Current NAM implementation supports binary tasks only.
-        if dataset not in ['heart', 'obesity_bin', 'breast_cancer']:
-            if 'nam' in models:
-                models.remove('nam')
-
         for model_name in models:
             result_path = os.path.join(
                 args['results_folder'], dataset, model_name + '.pkl',

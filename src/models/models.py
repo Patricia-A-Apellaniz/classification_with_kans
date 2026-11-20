@@ -38,6 +38,10 @@ class NAMModel:
     def fit(self, x, y):
         self.set_model()
         self.model.fit(x, y)
+
+        if self.model._multiclass:
+            self.classes_ = self.model.classes_
+
         return {}
 
     def set_model(self):
@@ -66,12 +70,24 @@ class NAMModel:
         return self
 
     def predict_proba(self, data):
-        prob_of_ones = self.model.predict_proba(data)
+        probabilities = self.model.predict_proba(data)
+
+        if self.model._multiclass:
+            return probabilities
+
+        # Preserve the existing binary behavior.
+        prob_of_ones = probabilities
         prob_of_zeros = 1 - prob_of_ones
+
         return np.hstack([prob_of_zeros, prob_of_ones])
 
     def predict(self, data, threshold=0.5):
         proba_preds = self.predict_proba(data)
+
+        if self.model._multiclass:
+            return self.classes_[np.argmax(proba_preds, axis=1)]
+
+        # Preserve the existing binary behavior.
         return np.argmax(proba_preds, axis=1).astype(int)
 
     def run_model(self, x_train, x_test, y_train, y_test):
@@ -79,6 +95,9 @@ class NAMModel:
 
         # Train the model
         _ = self.model.fit(x_train, y_train)
+
+        if self.model._multiclass:
+            self.classes_ = self.model.classes_
 
         return {'model': self.model,
                 'y_pred_proba': np.squeeze(self.predict_proba(x_test)),

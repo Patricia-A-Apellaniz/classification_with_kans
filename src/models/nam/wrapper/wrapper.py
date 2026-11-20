@@ -15,7 +15,10 @@ from src.models.nam.trainer import Trainer
 from src.models.nam.models import get_num_units
 from src.models.nam.models import NAM, MultiTaskNAM
 from src.models.nam.models.saver import Checkpointer
-from src.models.nam.trainer.losses import make_penalized_loss_func
+from src.models.nam.trainer.losses import (
+    make_penalized_loss_func,
+    make_multiclass_penalized_loss_func,
+)
 
 
 class NAMBase:
@@ -125,13 +128,38 @@ class NAMBase:
         # dataset = NAMDataset(self._preprocessor.fit_transform(X), y, w)
         dataset = NAMDataset(X, y, w)
 
-        self.criterion = make_penalized_loss_func(self.loss_func,
-                                                  self.regression, self.output_reg, self.l2_reg)
+        if getattr(self, '_multiclass', False):
+            if self.loss_func is not None:
+                raise ValueError(
+                    'A custom loss function is not supported for '
+                    'multiclass NAM in this implementation.'
+                )
+
+            self.criterion = make_multiclass_penalized_loss_func(
+                self.output_reg,
+                self.l2_reg,
+            )
+
+            trainer_metric = None
+            trainer_monitor_loss = True
+            trainer_early_stop_mode = 'min'
+        else:
+            # Preserve the current binary and regression behavior.
+            self.criterion = make_penalized_loss_func(
+                self.loss_func,
+                self.regression,
+                self.output_reg,
+                self.l2_reg,
+            )
+
+            trainer_metric = self.metric
+            trainer_monitor_loss = self.monitor_loss
+            trainer_early_stop_mode = self.early_stop_mode
 
         self.trainer = Trainer(
             models=self.models,
             dataset=dataset,
-            metric=self.metric,
+            metric=trainer_metric,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             num_epochs=self.num_epochs,
@@ -143,8 +171,8 @@ class NAMBase:
             decay_rate=self.decay_rate,
             save_model_frequency=self.save_model_frequency,
             patience=self.patience,
-            monitor_loss=self.monitor_loss,
-            early_stop_mode=self.early_stop_mode,
+            monitor_loss=trainer_monitor_loss,
+            early_stop_mode=trainer_early_stop_mode,
             criterion=self.criterion,
             regression=self.regression,
             num_learners=self.num_learners,
@@ -275,6 +303,30 @@ class NAMClassifier(NAMBase):
         )
         self.regression = False
 
+    def _initialize_models(self, X, y):
+        if not self._multiclass:
+            # Use the original initialization for binary classification.
+            return super()._initialize_models(X, y)
+
+        self.num_tasks = len(self.classes_)
+        self.num_inputs = X.shape[1]
+        self.models = []
+
+        for _ in range(self.num_learners):
+            model = NAM(
+                num_inputs=self.num_inputs,
+                num_units=get_num_units(
+                    self.units_multiplier,
+                    self.num_basis_functions,
+                    X,
+                ),
+                dropout=self.dropout,
+                feature_dropout=self.feature_dropout,
+                hidden_sizes=self.hidden_sizes,
+                num_classes=self.num_tasks,
+            )
+            self.models.append(model)
+
     def fit(self, X, y, w=None):
         if isinstance(X, pd.DataFrame):
             X = X.to_numpy()
@@ -283,17 +335,53 @@ class NAMClassifier(NAMBase):
         if isinstance(w, (pd.DataFrame, pd.Series)):
             w = w.to_numpy()
 
-        if len(np.unique(y[~np.isnan(y)])) > 2:
+        y = np.asarray(y).reshape(-1)
+
+        if np.isnan(y).any():
             raise ValueError(
-                'More than two unique y-values detected. Multiclass classification not currently supported.')
+                'NAM classification targets cannot contain missing values.'
+            )
+
+        self.classes_, encoded_y = np.unique(
+            y,
+            return_inverse=True,
+        )
+
+        if len(self.classes_) < 2:
+            raise ValueError(
+                'NAM classification requires at least two classes.'
+            )
+
+        self._multiclass = len(self.classes_) > 2
+
+        if self._multiclass:
+            # Cross-entropy requires class indices from 0 to K-1.
+            return super().fit(X, encoded_y, w)
+
+        # Preserve the existing binary labels and training path.
         return super().fit(X, y, w)
 
     def predict_proba(self, X) -> ArrayLike:
-        out = scipy.special.expit(super().predict(X))
-        return out
+        if not self._multiclass:
+            # Preserve the existing binary prediction path.
+            return scipy.special.expit(super().predict(X))
+
+        # Checkpoints reconstructed by PyTorch can start in training mode.
+        # Disable dropout for multiclass inference.
+        for model in self.models:
+            model.eval()
+
+        # NAMBase.predict averages the learners' logits.
+        mean_logits = super().predict(X)
+
+        return scipy.special.softmax(mean_logits, axis=1)
 
     def predict(self, X) -> ArrayLike:
-        return self.predict_proba(X).round()
+        if not self._multiclass:
+            return self.predict_proba(X).round()
+
+        probabilities = self.predict_proba(X)
+        return self.classes_[np.argmax(probabilities, axis=1)]
 
 
 class NAMRegressor(NAMBase):

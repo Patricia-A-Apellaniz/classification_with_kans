@@ -62,3 +62,51 @@ def make_penalized_loss_func(loss_func, regression, output_regularization, l2_re
     return penalized_loss_func
 
 
+def make_multiclass_penalized_loss_func(
+    output_regularization,
+    l2_regularization,
+):
+    """
+    Cross-entropy on class logits, with sample weights and NAM penalties.
+
+    Expected shapes:
+        logits:  [batch, num_classes]
+        targets: [batch, 1] or [batch]
+        weights: [batch, 1] or [batch]
+        fnn_out: [batch, num_classes, num_features]
+    """
+    def penalized_loss_func(logits, targets, weights, fnn_out, model):
+        targets = targets.reshape(-1).long()
+        weights = weights.reshape(-1)
+
+        per_sample_loss = F.cross_entropy(
+            logits,
+            targets,
+            reduction='none',
+        )
+
+        weight_sum = weights.sum()
+
+        if weight_sum <= 0:
+            raise ValueError(
+                'Multiclass NAM received a batch with no positive weights.'
+            )
+
+        loss = (per_sample_loss * weights).sum() / weight_sum
+
+        penalty = reg_penalty(
+            fnn_out,
+            model,
+            output_regularization,
+            l2_regularization,
+        )
+
+        # reg_penalty can return one output-regularization value per class.
+        if isinstance(penalty, torch.Tensor):
+            penalty = penalty.sum()
+
+        return loss + penalty
+
+    return penalized_loss_func
+
+

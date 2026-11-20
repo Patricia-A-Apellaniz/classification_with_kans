@@ -16,7 +16,8 @@ class NAM(torch.nn.Module):
         hidden_sizes: list,
         dropout: float,
         feature_dropout: float,
-        activation: str = 'relu'
+        activation: str = 'relu',
+        num_classes: int = 1,
     ) -> None:
         super(NAM, self).__init__()
         assert len(num_units) == num_inputs
@@ -26,6 +27,8 @@ class NAM(torch.nn.Module):
         self.dropout = dropout
         self.feature_dropout = feature_dropout
         self.activation = activation
+        # One output preserves the current binary architecture.
+        self.num_classes = num_classes
 
         self.dropout_layer = nn.Dropout(p=self.feature_dropout)
 
@@ -36,12 +39,13 @@ class NAM(torch.nn.Module):
                 num_units=self.num_units[i], 
                 dropout=self.dropout, 
                 hidden_sizes=self.hidden_sizes,
-                activation=self.activation
+                activation=self.activation,
+                output_size=self.num_classes,
             )
             for i in range(num_inputs)
         ])
 
-        self._bias = torch.nn.Parameter(data=torch.zeros(1))
+        self._bias = torch.nn.Parameter(data=torch.zeros(self.num_classes))
 
     def calc_outputs(self, inputs: torch.Tensor) -> Sequence[torch.Tensor]:
         """Returns the output computed by each feature net."""
@@ -49,11 +53,22 @@ class NAM(torch.nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         individual_outputs = self.calc_outputs(inputs)
-        conc_out = torch.cat(individual_outputs, dim=-1)
-        dropout_out = self.dropout_layer(conc_out).unsqueeze(1)
+        if self.num_classes == 1:
+            # Keep the original binary operations and tensor shapes.
+            conc_out = torch.cat(individual_outputs, dim=-1)
+            dropout_out = self.dropout_layer(conc_out).unsqueeze(1)
 
-        out = torch.sum(dropout_out, dim=-1)
-        return out + self._bias, dropout_out
+            out = torch.sum(dropout_out, dim=-1)
+            return out + self._bias, dropout_out
+
+        # [batch, num_classes, num_inputs]
+        stacked_out = torch.stack(individual_outputs, dim=-1)
+        dropout_out = self.dropout_layer(stacked_out)
+
+        # [batch, num_classes]
+        logits = torch.sum(dropout_out, dim=-1) + self._bias
+
+        return logits, dropout_out
 
 
 class MultiTaskNAM(torch.nn.Module):

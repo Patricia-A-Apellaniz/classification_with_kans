@@ -320,7 +320,15 @@ def load_saved_params(dataset_name, model_name, args):
 
 
 def load_configured_params(dataset_name, model_name, train_size, args):
-    if model_name in {'ebm', 'xgboost', 'lightgbm'}:
+    nam_multiclass_dataset = (
+        model_name == 'nam'
+        and dataset_name in {'diabetes_h', 'diabetes_130', 'obesity'}
+    )
+
+    if (
+        model_name in {'ebm', 'xgboost', 'lightgbm'}
+        or nam_multiclass_dataset
+    ):
         path = os.path.join(
             args['config_folder'],
             dataset_name,
@@ -360,9 +368,6 @@ def fit_with_saved_params(
     train_size,
 ):
     """Train one model with saved parameters, without GridSearchCV."""
-    if model_name == 'nam' and len(np.unique(y_train)) > 2:
-        return None, None, None, None
-
     params = load_configured_params(
         dataset_name,
         model_name,
@@ -386,69 +391,75 @@ def get_best_params(model_name, x_train, y_train, args):
     n_jobs = args['n_jobs']
     n_splits_cv = args['n_folds']
     n_classes = len(np.unique(y_train))
-    if n_classes > 2 and model_name == 'nam':  # NAM does not support multiclass problems
-        return None, None, None, None
+
+    model, hyperparameters = get_model(
+        model_name,
+        default=False,
+    )
+
+    new_models = {'ebm', 'xgboost', 'lightgbm'}
+    nam_multiclass = model_name == 'nam' and n_classes > 2
+
+    if model_name in new_models or nam_multiclass:
+        cv_inner = StratifiedKFold(
+            n_splits=n_splits_cv,
+            shuffle=True,
+            random_state=0,
+        )
     else:
-        model, hyperparameters = get_model(model_name, default=False)
-
-        # Configure the cross-validation procedure for parameter tuning
-        if model_name in {'ebm', 'xgboost', 'lightgbm'}:
-            cv_inner = StratifiedKFold(
-                n_splits=n_splits_cv,
-                shuffle=True,
-                random_state=0,
-            )
-        else:
-            cv_inner = KFold(
-                n_splits=n_splits_cv,
-                shuffle=True,
-                random_state=0,
-            )
-
-        error_score = (
-            'raise'
-            if model_name in {'ebm', 'xgboost', 'lightgbm'}
-            else 0.0
+        # Preserve the current search behavior for binary NAM
+        # and the original models.
+        cv_inner = KFold(
+            n_splits=n_splits_cv,
+            shuffle=True,
+            random_state=0,
         )
 
-        # Define search
-        if n_classes > 2:  # Multiclass problem
-            search = GridSearchCV(model,
-                                  hyperparameters,
-                                  scoring=['f1_weighted', 'roc_auc_ovo_weighted', 'recall_weighted'],
-                                  refit='f1_weighted',
-                                  cv=cv_inner,
-                                  n_jobs=n_jobs,
-                                  error_score=error_score,
-                                  verbose=4)  # Other option: roc_auc_ovo_weighted
-        else:  # Binary problem
-            search = GridSearchCV(model,
-                                  hyperparameters,
-                                  scoring=['f1', 'roc_auc', 'recall'],
-                                  refit='f1',
-                                  cv=cv_inner,
-                                  n_jobs=n_jobs,
-                                  error_score=error_score,
-                                  verbose=4)
+    error_score = (
+        'raise'
+        if model_name in new_models or nam_multiclass
+        else 0.0
+    )
 
-        # Search includes cross-validation and refitting the best model.
-        start = time.perf_counter()
-        result = search.fit(x_train, y_train.squeeze())
-        total_search_and_refit_time = time.perf_counter() - start
-
-        # GridSearchCV records the time used to refit the best estimator.
-        training_time = result.refit_time_
-
-        # Search and cross-validation time, excluding the final refit.
-        hp_search_time = (
-            total_search_and_refit_time - training_time
+    if n_classes > 2:
+        search = GridSearchCV(
+            model,
+            hyperparameters,
+            scoring=[
+                'f1_weighted',
+                'roc_auc_ovo_weighted',
+                'recall_weighted',
+            ],
+            refit='f1_weighted',
+            cv=cv_inner,
+            n_jobs=n_jobs,
+            error_score=error_score,
+            verbose=4,
+        )
+    else:
+        search = GridSearchCV(
+            model,
+            hyperparameters,
+            scoring=['f1', 'roc_auc', 'recall'],
+            refit='f1',
+            cv=cv_inner,
+            n_jobs=n_jobs,
+            error_score=error_score,
+            verbose=4,
         )
 
-        return (
-            result.best_params_,
-            result.best_estimator_,
-            hp_search_time,
-            training_time,
-        )
+    start = time.perf_counter()
+    result = search.fit(x_train, y_train.squeeze())
+    total_search_and_refit_time = time.perf_counter() - start
+
+    training_time = result.refit_time_
+    hp_search_time = total_search_and_refit_time - training_time
+
+    return (
+        result.best_params_,
+        result.best_estimator_,
+        hp_search_time,
+        training_time,
+    )
 
 
