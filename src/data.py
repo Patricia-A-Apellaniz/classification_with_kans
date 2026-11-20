@@ -5,6 +5,7 @@
 # Package imports
 import os
 
+import numpy as np
 import pandas as pd
 
 from sklearn.datasets import load_breast_cancer
@@ -19,12 +20,22 @@ def scale_numerical_data(data):
     return data
 
 
-def load_data(dataset_name, args, test_split=0.2, n_patients=1000):
+def load_data(
+    dataset_name,
+    args,
+    test_split=0.2,
+    n_patients=1000,
+    raw=False,
+):
     if dataset_name in ['heart', 'diabetes_h', 'diabetes_130']:
         # These data are already scaled and the column names do not have spaces
         data = pd.read_csv(os.path.join(args['data_folder'], f"{dataset_name}_data.csv"))
         # Keep only n_patients
-        data = data.sample(n=n_patients, random_state=0).reset_index(drop=True)
+        if not raw:
+            data = data.sample(
+                n=n_patients,
+                random_state=0,
+            ).reset_index(drop=True)
         target_name = data.columns[-1]
         x, y = data.drop(columns=[target_name]), data[target_name]
 
@@ -32,7 +43,11 @@ def load_data(dataset_name, args, test_split=0.2, n_patients=1000):
         data = pd.read_csv(os.path.join(args['data_folder'], 'obesity.csv'))
 
         # Keep only n_patients
-        data = data.sample(n=n_patients, random_state=0).reset_index(drop=True)
+        if not raw:
+            data = data.sample(
+                n=n_patients,
+                random_state=0,
+            ).reset_index(drop=True)
 
         # Convert all variables to numeric
         data['Gender'] = data['Gender'].apply(lambda x: 1 if x == 'Female' else 0)
@@ -48,11 +63,12 @@ def load_data(dataset_name, args, test_split=0.2, n_patients=1000):
         if dataset_name == 'obesity_bin':
             data['NObeyesdad'] = data['NObeyesdad'].apply(lambda x: 1 if x > 3 else 0)  # Binary classification
 
-        # Impute missing values
-        data = data.fillna(data.mean())
         target_name = 'NObeyesdad'
         x, y = data.drop(columns=[target_name]), data[target_name]
-        x = scale_numerical_data(x)
+
+        if not raw:
+            x = x.fillna(x.mean())
+            x = scale_numerical_data(x)
 
     elif dataset_name == 'breast_cancer':
         data = load_breast_cancer(as_frame=True)
@@ -61,12 +77,126 @@ def load_data(dataset_name, args, test_split=0.2, n_patients=1000):
         # Rename columns to remove spaces
         new_cols = [col.replace(' ', '_') for col in x.columns]
         x.columns = new_cols
-        x = scale_numerical_data(x)
+        if not raw:
+            x = scale_numerical_data(x)
 
     else:
         raise ValueError(f"Data name {dataset_name} not found")
+
+    if raw:
+        return x, y
 
     # Split the data into training and test sets
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_split, random_state=0)
 
     return x_train, x_test, y_train, y_test
+
+
+def make_sample_splits(dataset_name, x, y, args):
+    """
+    Return one fixed test index and nested training indices.
+
+    All configured sizes are constructed before filtering the requested
+    sizes, so a size receives the same rows regardless of the selection.
+    """
+    sizes = args['dataset_sizes'][dataset_name]
+    seed = args['split_seed']
+    indices = np.arange(len(y))
+    labels = np.asarray(y)
+
+    if dataset_name in {'heart', 'diabetes_h', 'diabetes_130'}:
+        # Select 12,500 rows, then reserve 2,500 for test.
+        selected, _ = train_test_split(
+            indices,
+            train_size=12500,
+            random_state=seed,
+            stratify=labels,
+        )
+
+        train_pool, test_idx = train_test_split(
+            selected,
+            test_size=2500,
+            random_state=seed,
+            stratify=labels[selected],
+        )
+    else:
+        # sklearn determines the integer size of the 20% test split.
+        train_pool, test_idx = train_test_split(
+            indices,
+            test_size=0.2,
+            random_state=seed,
+            stratify=labels,
+        )
+
+    if len(train_pool) != max(sizes):
+        raise ValueError(
+            f'{dataset_name}: expected {max(sizes)} available training '
+            f'rows, found {len(train_pool)}.'
+        )
+
+    # Repeatedly select a smaller stratified subset from the previous one.
+    nested = {}
+    current = train_pool
+
+    for size in sorted(sizes, reverse=True):
+        if size < len(current):
+            current, _ = train_test_split(
+                current,
+                train_size=size,
+                random_state=seed,
+                stratify=labels[current],
+            )
+
+        nested[size] = current.copy()
+
+    requested = args['sample_sizes']
+
+    if requested is not None:
+        nested = {
+            size: nested[size]
+            for size in sizes
+            if size in requested
+        }
+
+    return test_idx, nested
+
+
+def preprocess_split(x_train, x_test):
+    """
+    Fit imputation and scaling on x_train and apply them to x_test.
+
+    Columns that are constant in x_train are left unscaled.
+    Entirely missing training columns are imputed with zero.
+    """
+    x_train = x_train.astype(float).copy()
+    x_test = x_test.astype(float).copy()
+
+    if np.isinf(x_train.to_numpy()).any() or np.isinf(x_test.to_numpy()).any():
+        raise ValueError('Input data contains infinite values.')
+
+    # Means are calculated only from the selected training data.
+    imputation_values = x_train.mean().fillna(0.0)
+
+    x_train = x_train.fillna(imputation_values)
+    x_test = x_test.fillna(imputation_values)
+
+    means = x_train.mean()
+    stds = x_train.std(ddof=0)
+
+    # A constant column is not centered or scaled.
+    scalable = stds > 0
+    means.loc[~scalable] = 0.0
+    stds.loc[~scalable] = 1.0
+
+    x_train = (x_train - means) / stds
+    x_test = (x_test - means) / stds
+
+    preprocessing = {
+        'columns': x_train.columns.tolist(),
+        'imputation_values': imputation_values.to_dict(),
+        'means': means.to_dict(),
+        'stds': stds.to_dict(),
+        'constant_columns': stds.index[~scalable].tolist(),
+    }
+
+    return x_train, x_test, preprocessing

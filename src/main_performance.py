@@ -3,6 +3,7 @@
 # Date: 31/07/2025
 
 # Package imports
+import argparse
 import os
 import sys
 import time
@@ -19,7 +20,11 @@ from tabulate import tabulate
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(parent_dir)
-from src.data import load_data
+from src.data import (
+    load_data,
+    make_sample_splits,
+    preprocess_split,
+)
 from src.models.model_utils import (
     add_bootstrap_metrics,
     fit_with_saved_params,
@@ -188,203 +193,211 @@ def get_box_plots(results_folder):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--smoke-test',
+        action='store_true',
+        help='Run one small logistic regression experiment per dataset.',
+    )
+    cli_args = parser.parse_args()
     args = get_config('performance')
-    create_results_folder(args['results_folder'], args)
+
+    if cli_args.smoke_test:
+        args['train'] = True
+        args['hp_search'] = False
+        args['models'] = ['lr']
+        args['sample_sizes'] = [100]
+        args['results_folder'] = os.path.join(
+            args['base_folder'], 'results_metrics', 'smoke_test'
+        )
 
     if args['train']:
         for dataset_name in args['datasets']:
-            x_train, x_test, y_train, y_test = load_data(
+            x, y = load_data(
                 dataset_name,
+                args,
+                raw=True,
+            )
+
+            test_idx, train_splits = make_sample_splits(
+                dataset_name,
+                x,
+                y,
                 args,
             )
 
-            for model_name in args['models']:
-                # Current NAM implementation does not support multiclass.
-                if (
-                    model_name == 'nam'
-                    and len(np.unique(y_train)) > 2
-                ):
-                    print(
-                        f"Skipping {model_name} on {dataset_name}: "
-                        "multiclass is not supported."
-                    )
-                    continue
+            if not train_splits:
+                print(
+                    f'No selected sizes are available for {dataset_name}.'
+                )
+                continue
 
-                result_path = os.path.join(
+            for train_size, train_idx in sorted(train_splits.items()):
+                x_train, x_test, preprocessing = preprocess_split(
+                    x.iloc[train_idx],
+                    x.iloc[test_idx],
+                )
+
+                y_train = y.iloc[train_idx]
+                y_test = y.iloc[test_idx]
+
+                result_folder = os.path.join(
                     args['results_folder'],
+                    str(train_size),
                     dataset_name,
-                    model_name + '.pkl',
                 )
+                os.makedirs(result_folder, exist_ok=True)
 
-                # Do not overwrite a previous run.
-                if os.path.exists(result_path):
+                for model_name in args['models']:
+                    if (
+                        model_name == 'nam'
+                        and len(np.unique(y_train)) > 2
+                    ):
+                        print(
+                            f'Skipping multiclass NAM: '
+                            f'{dataset_name}, N={train_size}.'
+                        )
+                        continue
+
+                    result_path = os.path.join(
+                        result_folder,
+                        model_name + '.pkl',
+                    )
+
+                    if os.path.exists(result_path):
+                        print(f'Result already exists: {result_path}')
+                        continue
+
                     print(
-                        f"Result already exists; skipping: "
-                        f"{result_path}"
-                    )
-                    continue
-
-                print(
-                    f"\n\nTraining {model_name} "
-                    f"on {dataset_name}"
-                )
-
-                if args['hp_search']:
-                    print("Running hyperparameter search.")
-
-                    (
-                        best_params,
-                        best_model,
-                        hp_search_time,
-                        training_time,
-                    ) = get_best_params(
-                        model_name,
-                        x_train,
-                        y_train,
-                        args,
-                    )
-                else:
-                    print("Using saved hyperparameters.")
-
-                    (
-                        best_params,
-                        best_model,
-                        hp_search_time,
-                        training_time,
-                    ) = fit_with_saved_params(
-                        model_name,
-                        dataset_name,
-                        x_train,
-                        y_train,
-                        args,
+                        f'\nTraining {model_name} on '
+                        f'{dataset_name}, N={train_size}.'
                     )
 
-                if best_model is None:
-                    print(
-                        f"No supported model was returned for "
-                        f"{dataset_name}/{model_name}."
-                    )
-                    continue
+                    if args['hp_search']:
+                        (
+                            best_params,
+                            best_model,
+                            hp_search_time,
+                            training_time,
+                        ) = get_best_params(
+                            model_name,
+                            x_train,
+                            y_train,
+                            args,
+                        )
+                    else:
+                        (
+                            best_params,
+                            best_model,
+                            hp_search_time,
+                            training_time,
+                        ) = fit_with_saved_params(
+                            model_name,
+                            dataset_name,
+                            x_train,
+                            y_train,
+                            args,
+                            train_size,
+                        )
 
-                y_test_array = np.asarray(y_test).reshape(-1)
+                    if best_model is None:
+                        print(
+                            f'No model returned for '
+                            f'{dataset_name}/{model_name}.'
+                        )
+                        continue
 
-                start = time.perf_counter()
+                    start = time.perf_counter()
 
-                y_pred = np.asarray(
-                    best_model.predict(x_test)
-                ).reshape(-1)
+                    y_pred = np.asarray(
+                        best_model.predict(x_test)
+                    ).reshape(-1)
 
-                y_proba = np.asarray(
-                    best_model.predict_proba(x_test)
-                )
-
-                inference_time = time.perf_counter() - start
-
-                classes = np.asarray(
-                    best_model.classes_
-                ).reshape(-1)
-
-                if y_proba.ndim != 2:
-                    raise ValueError(
-                        f"{dataset_name}/{model_name}: expected a "
-                        f"two-dimensional probability matrix, got "
-                        f"{y_proba.shape}."
-                    )
-
-                if len(y_test_array) != len(y_pred):
-                    raise ValueError(
-                        f"{dataset_name}/{model_name}: y_test and "
-                        "y_pred have different lengths."
-                    )
-
-                if len(y_test_array) != y_proba.shape[0]:
-                    raise ValueError(
-                        f"{dataset_name}/{model_name}: y_test and "
-                        "y_proba have different numbers of rows."
-                    )
-
-                if y_proba.shape[1] != len(classes):
-                    raise ValueError(
-                        f"{dataset_name}/{model_name}: probability "
-                        "columns do not match the number of classes."
+                    y_proba = np.asarray(
+                        best_model.predict_proba(x_test)
                     )
 
-                result = {
-                    'dataset': dataset_name,
-                    'model': model_name,
-                    'y_test': y_test_array,
-                    'y_pred': y_pred,
-                    'y_proba': y_proba,
-                    'classes': classes,
-                    'hyperparameters': best_params,
-                    'hp_search_time': hp_search_time,
-                    'training_time': training_time,
-                    'inference_time': inference_time,
-                    'hp_search': args['hp_search'],
-                }
+                    inference_time = time.perf_counter() - start
 
-                if args['calculate_bootstrap']:
-                    add_bootstrap_metrics(
-                        result,
-                        n_bootstrap=args['n_bootstrap'],
-                        ci=args['bootstrap_ci'],
-                    )
+                    classes = np.asarray(
+                        best_model.classes_
+                    ).reshape(-1)
 
-                # Fail instead of overwriting if the path now exists.
-                with open(result_path, 'xb') as f:
-                    pickle.dump(
-                        result,
-                        f,
-                        protocol=pickle.HIGHEST_PROTOCOL,
-                    )
+                    if y_proba.ndim != 2:
+                        raise ValueError(
+                            f'{dataset_name}/{model_name}: '
+                            f'invalid probability shape {y_proba.shape}.'
+                        )
 
-                if hp_search_time is None:
-                    print("Hyperparameter search: not performed.")
-                else:
-                    print(
-                        f"Hyperparameter search: "
-                        f"{hp_search_time:.4f} seconds."
-                    )
+                    if y_proba.shape != (len(y_test), len(classes)):
+                        raise ValueError(
+                            f'{dataset_name}/{model_name}: '
+                            'probabilities do not match test rows/classes.'
+                        )
 
-                print(
-                    f"Training: {training_time:.4f} seconds."
-                )
+                    if len(y_pred) != len(y_test):
+                        raise ValueError(
+                            f'{dataset_name}/{model_name}: '
+                            'predictions do not match test rows.'
+                        )
 
-                print(
-                    f"Inference on the test set: "
-                    f"{inference_time:.4f} seconds."
-                )
-                print(f"Saved result: {result_path}")
+                    result = {
+                        'dataset': dataset_name,
+                        'model': model_name,
+                        'train_size': train_size,
+                        'train_indices': train_idx,
+                        'test_indices': test_idx,
+                        'y_test': np.asarray(y_test).reshape(-1),
+                        'y_pred': y_pred,
+                        'y_proba': y_proba,
+                        'classes': classes,
+                        'hyperparameters': best_params,
+                        'preprocessing': preprocessing,
+                        'split_seed': args['split_seed'],
+                        'hp_search': args['hp_search'],
+                        'hp_search_time': hp_search_time,
+                        'training_time': training_time,
+                        'inference_time': inference_time,
+                    }
 
-    # This part runs both after training and in read-only results mode.
-    (
-        results_table,
-        table_col_names,
-        results_table_no_ci,
-    ) = get_results_table(args)
+                    if args['calculate_bootstrap']:
+                        add_bootstrap_metrics(
+                            result,
+                            n_bootstrap=args['n_bootstrap'],
+                            ci=args['bootstrap_ci'],
+                        )
 
-    expected_rows = sum(
-        1
+                    with open(result_path, 'xb') as f:
+                        pickle.dump(
+                            result,
+                            f,
+                            protocol=pickle.HIGHEST_PROTOCOL,
+                        )
+
+                    print(f'Saved {result_path}')
+
+    # Read one table per size, including when train=False.
+    available_sizes = sorted({
+        size
         for dataset in args['datasets']
-        for model_name in args['models']
-        if not (
-            model_name == 'nam'
-            and dataset not in [
-                'heart',
-                'obesity_bin',
-                'breast_cancer',
-            ]
+        for size in args['dataset_sizes'][dataset]
+        if (
+            args['sample_sizes'] is None
+            or size in args['sample_sizes']
         )
-    )
+    })
 
-    if len(results_table) == expected_rows:
-        get_box_plots(args['results_folder'])
-        mrr_all = get_mrr_models()
-        get_mrr_datasets(mrr_all)
-        get_p_values()
-    else:
-        print(
-            "\nThe results table is incomplete: "
-            f"{len(results_table)} of {expected_rows} rows available. "
-            "Skipping rankings and statistical comparisons."
+    for train_size in available_sizes:
+        table_args = args.copy()
+        table_args['datasets'] = [
+            dataset
+            for dataset in args['datasets']
+            if train_size in args['dataset_sizes'][dataset]
+        ]
+        table_args['results_folder'] = os.path.join(
+            args['results_folder'],
+            str(train_size),
         )
+
+        print(f'\nResults for training size N={train_size}')
+        get_results_table(table_args)

@@ -6,6 +6,7 @@
 import os
 import pickle
 import time
+import json
 
 from kan import *
 from scipy.stats import t
@@ -274,20 +275,42 @@ def load_saved_params(dataset_name, model_name, args):
     return params
 
 
+def load_configured_params(dataset_name, model_name, train_size, args):
+    path = os.path.join(
+        args['config_folder'],
+        dataset_name,
+        model_name + '.json',
+    )
+
+    with open(path, encoding='utf-8') as f:
+        configurations = json.load(f)
+
+    params = configurations[str(train_size)]
+
+    if model_name == 'mlp':
+        params['hidden_layer_sizes'] = tuple(
+            params['hidden_layer_sizes']
+        )
+
+    return params
+
+
 def fit_with_saved_params(
     model_name,
     dataset_name,
     x_train,
     y_train,
     args,
+    train_size,
 ):
     """Train one model with saved parameters, without GridSearchCV."""
     if model_name == 'nam' and len(np.unique(y_train)) > 2:
         return None, None, None, None
 
-    params = load_saved_params(
+    params = load_configured_params(
         dataset_name,
         model_name,
+        train_size,
         args,
     )
 

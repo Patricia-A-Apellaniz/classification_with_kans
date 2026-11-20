@@ -56,6 +56,21 @@ def get_config(task):
     args['data_folder'] = os.path.join(base_folder, 'data')
     # Historical results contain the previously selected hyperparameters.
     args['params_folder'] = os.path.join(base_folder, 'results_metrics')
+    args['config_folder'] = os.path.join(base_folder, 'configurations')
+
+    args['dataset_sizes'] = {
+        'heart': [100, 500, 1000, 5000, 10000],
+        'diabetes_h': [100, 500, 1000, 5000, 10000],
+        'diabetes_130': [100, 500, 1000, 5000, 10000],
+        'obesity': [100, 500, 1000, 1688],
+        'obesity_bin': [100, 500, 1000, 1688],
+        'breast_cancer': [100, 455],
+    }
+
+    # None runs every available size.
+    # Example selection: [100, 1000, 10000]
+    args['sample_sizes'] = None
+    args['split_seed'] = 0
 
     if task == 'performance':
         # New-format results are stored separately from historical files.
