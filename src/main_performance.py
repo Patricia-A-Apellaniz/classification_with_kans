@@ -221,7 +221,7 @@ def run_experiment(
 
             if os.path.exists(result_path):
                 print(f'Result already exists: {result_path}')
-                return
+                return dataset_name, train_size, model_name, 'reused'
 
             print(
                 f'\nTraining {model_name} on '
@@ -331,6 +331,7 @@ def run_experiment(
                 )
 
             print(f'Saved {result_path}')
+            return dataset_name, train_size, model_name, 'trained'
         finally:
             os.chdir(original_dir)
 
@@ -402,8 +403,33 @@ if __name__ == '__main__':
                         )
                     )
 
+        total_tasks = len(tasks)
+        trained = 0
+        reused = 0
+
+        print(f'Total experiment tasks: {total_tasks}', flush=True)
+
         with parallel_config(backend='loky', inner_max_num_threads=1):
-            Parallel(n_jobs=args['experiment_jobs'])(tasks)
+            completed_tasks = Parallel(
+                n_jobs=args['experiment_jobs'],
+                return_as='generator_unordered',
+            )(tasks)
+
+            for completed, task_result in enumerate(completed_tasks, start=1):
+                dataset, size, model, status = task_result
+
+                if status == 'trained':
+                    trained += 1
+                else:
+                    reused += 1
+
+                print(
+                    f'Progress: {completed}/{total_tasks} '
+                    f'({100 * completed / total_tasks:.1f}%) | '
+                    f'trained={trained}, reused={reused} | '
+                    f'{dataset}, N={size}, {model}: {status}',
+                    flush=True,
+                )
 
     # Read one table per size, including when train=False.
     available_sizes = sorted({
