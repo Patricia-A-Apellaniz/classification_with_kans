@@ -83,6 +83,21 @@ def load_data(
     else:
         raise ValueError(f"Data name {dataset_name} not found")
 
+    # Classification labels must be numeric, finite integers.
+    y = pd.to_numeric(y, errors='raise')
+
+    if y.isna().any() or not np.isfinite(y.to_numpy()).all():
+        raise ValueError(
+            f'{dataset_name}: target contains missing or infinite values.'
+        )
+
+    if not np.equal(y.to_numpy(), np.floor(y.to_numpy())).all():
+        raise ValueError(
+            f'{dataset_name}: target contains non-integer values.'
+        )
+
+    y = y.astype(np.int64)
+
     if raw:
         return x, y
 
