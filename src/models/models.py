@@ -267,16 +267,21 @@ class Kan_model:
         self.model = KAN(width=self.width, grid=self.hyperparameters["grid"], k=self.hyperparameters["k"],
                          seed=0, device=self.device, sparse_init=self.hyperparameters["sparse_init"])
 
-        if isinstance(x_train, np.ndarray):
-            self.x_train = torch.from_numpy(x_train).to(self.device).float()
-            self.y_train = np.squeeze(torch.from_numpy(y_train).to(self.device)).long()
-            self.x_test = torch.from_numpy(x_test).to(self.device).float()
-            self.y_test = np.squeeze(torch.from_numpy(y_test).to(self.device)).long()
-        else:
-            self.x_train = torch.from_numpy(x_train.values).to(self.device).float()
-            self.y_train = np.squeeze(torch.from_numpy(y_train.values).to(self.device)).long()
-            self.x_test = torch.from_numpy(x_test.values).to(self.device).float()
-            self.y_test = np.squeeze(torch.from_numpy(y_test.values).to(self.device)).long()
+        self.x_train = torch.from_numpy(
+            np.asarray(x_train)
+        ).to(self.device).float()
+
+        self.y_train = torch.from_numpy(
+            np.asarray(y_train)
+        ).to(self.device).squeeze().long()
+
+        self.x_test = torch.from_numpy(
+            np.asarray(x_test)
+        ).to(self.device).float()
+
+        self.y_test = torch.from_numpy(
+            np.asarray(y_test)
+        ).to(self.device).squeeze().long()
 
         # Note that KAN interface uses "test" for what we call "val": we reverse here for consistency
         self.dataset = {'train_input': self.x_train,
