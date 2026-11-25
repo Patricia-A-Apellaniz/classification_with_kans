@@ -96,7 +96,7 @@ def get_config(task):
         )
 
     # Execution mode
-    args['train'] = False
+    args['train'] = True
     args['hp_search'] = False
 
     # Optional bootstrap calculation after prediction
@@ -108,7 +108,7 @@ def get_config(task):
     # Hyperparameter search settings, used only when hp_search is True
     args['n_folds'] = 3
     args['n_jobs'] = 1
-    args['experiment_jobs'] = 4
+    args['experiment_jobs'] = 15
 
     # Interpretability parameters (representation info)
     args['n_dists'] = 5 # Representation parameter: threshold on the number of closest patients to show
