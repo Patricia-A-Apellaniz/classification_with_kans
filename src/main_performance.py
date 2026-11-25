@@ -3,15 +3,19 @@
 # Date: 31/07/2025
 
 # Package imports
+import argparse
 import os
 import sys
 import time
 import pickle
+import tempfile
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import torch
+from joblib import Parallel, delayed, parallel_config
 
 from tueplots import bundles
 from tabulate import tabulate
@@ -19,9 +23,24 @@ from tabulate import tabulate
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(parent_dir)
-from src.data import load_data
-from src.models.model_utils import get_best_params, get_bootstrap_metrics
-from src.utils import get_config, get_results_table, get_p_values_from_table_data, create_results_folder
+from src.data import (
+    load_data,
+    make_sample_splits,
+    preprocess_split,
+)
+from src.models.model_utils import (
+    add_bootstrap_metrics,
+    fit_with_saved_params,
+    get_best_params,
+)
+from src.utils import (
+    create_results_folder,
+    get_calibration_tables,
+    get_config,
+    get_multiclass_table,
+    get_p_values_from_table_data,
+    get_results_table,
+)
 
 
 def get_mrr_datasets(mrr_all_elements):
@@ -151,7 +170,10 @@ def get_box_plots(results_folder):
                                    'rf': 'RF',
                                    'nam': 'NAM',
                                    'kan': 'Logistic-KAN',
-                                   'kan_gam': 'KAAM'})
+                                   'kan_gam': 'KAAM',
+                                   'ebm': 'EBM',
+                                   'xgboost': 'XGBoost',
+                                   'lightgbm': 'LightGBM'})
     with plt.rc_context({**bundles.icml2024(column='half', nrows=1, ncols=1, usetex=True)}):
         plt.figure(figsize=(6.5, 2))
         palette = sns.color_palette("tab10")
@@ -183,50 +205,256 @@ def get_box_plots(results_folder):
         plt.close()
 
 
+def run_experiment(
+    dataset_name, train_size, model_name, x_train, y_train, x_test, y_test,
+    train_idx, test_idx, preprocessing, result_folder, args,
+):
+    torch.set_num_threads(1)
+    original_dir = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix='kan-experiment-') as work_dir:
+        try:
+            os.chdir(work_dir)
+            result_path = os.path.join(
+                result_folder,
+                model_name + '.pkl',
+            )
+
+            if os.path.exists(result_path):
+                print(f'Result already exists: {result_path}')
+                return dataset_name, train_size, model_name, 'reused'
+
+            print(
+                f'\nTraining {model_name} on '
+                f'{dataset_name}, N={train_size}.'
+            )
+
+            if args['hp_search']:
+                (
+                    best_params,
+                    best_model,
+                    hp_search_time,
+                    training_time,
+                ) = get_best_params(
+                    model_name,
+                    x_train,
+                    y_train,
+                    args,
+                )
+            else:
+                (
+                    best_params,
+                    best_model,
+                    hp_search_time,
+                    training_time,
+                ) = fit_with_saved_params(
+                    model_name,
+                    dataset_name,
+                    x_train,
+                    y_train,
+                    args,
+                    train_size,
+                )
+
+            if best_model is None:
+                print(
+                    f'No model returned for '
+                    f'{dataset_name}/{model_name}.'
+                )
+                return
+
+            start = time.perf_counter()
+
+            y_pred = np.asarray(
+                best_model.predict(x_test)
+            ).reshape(-1)
+
+            y_proba = np.asarray(
+                best_model.predict_proba(x_test)
+            )
+
+            inference_time = time.perf_counter() - start
+
+            classes = np.asarray(
+                best_model.classes_
+            ).reshape(-1)
+
+            if y_proba.ndim != 2:
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    f'invalid probability shape {y_proba.shape}.'
+                )
+
+            if y_proba.shape != (len(y_test), len(classes)):
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    'probabilities do not match test rows/classes.'
+                )
+
+            if len(y_pred) != len(y_test):
+                raise ValueError(
+                    f'{dataset_name}/{model_name}: '
+                    'predictions do not match test rows.'
+                )
+
+            result = {
+                'dataset': dataset_name,
+                'model': model_name,
+                'train_size': train_size,
+                'train_indices': train_idx,
+                'test_indices': test_idx,
+                'y_test': np.asarray(y_test).reshape(-1),
+                'y_pred': y_pred,
+                'y_proba': y_proba,
+                'classes': classes,
+                'hyperparameters': best_params,
+                'preprocessing': preprocessing,
+                'split_seed': args['split_seed'],
+                'hp_search': args['hp_search'],
+                'hp_search_time': hp_search_time,
+                'training_time': training_time,
+                'inference_time': inference_time,
+            }
+
+            if args['calculate_bootstrap']:
+                add_bootstrap_metrics(
+                    result,
+                    n_bootstrap=args['n_bootstrap'],
+                    ci=args['bootstrap_ci'],
+                    n_bins=args['ece_bins'],
+                )
+
+            with open(result_path, 'xb') as f:
+                pickle.dump(
+                    result,
+                    f,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+
+            print(f'Saved {result_path}')
+            return dataset_name, train_size, model_name, 'trained'
+        finally:
+            os.chdir(original_dir)
+
+
 if __name__ == '__main__':
-    # Get the configuration
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--smoke-test',
+        action='store_true',
+        help='Run one small logistic regression experiment per dataset.',
+    )
+    cli_args = parser.parse_args()
     args = get_config('performance')
-    create_results_folder(args['results_folder'], args)
+
+    if cli_args.smoke_test:
+        args['train'] = True
+        args['hp_search'] = False
+        args['models'] = ['lr']
+        args['sample_sizes'] = [100]
+        args['results_folder'] = os.path.join(
+            args['base_folder'], 'results_metrics', 'smoke_test'
+        )
 
     if args['train']:
+        tasks = []
         for dataset_name in args['datasets']:
-            # Load data
-            x_train, x_test, y_train, y_test = load_data(dataset_name, args)
+            x, y = load_data(
+                dataset_name,
+                args,
+                raw=True,
+            )
 
-            for model_name in args['models']:
-                print(f"\n\nTraining {model_name}")
-                t0 = time.time()
-                best_params, best_model = get_best_params(model_name, x_train, y_train, args)
-                train_time = time.time() - t0
+            test_idx, train_splits = make_sample_splits(
+                dataset_name,
+                x,
+                y,
+                args,
+            )
 
-                if best_model is None:
-                    metrics = get_bootstrap_metrics(y_test,
-                                                    y_test,
-                                                    np.ones((y_test.shape[0], len(np.unique(y_train)))) / len(
-                                                        np.unique(y_train)))
+            if not train_splits:
+                print(
+                    f'No selected sizes are available for {dataset_name}.'
+                )
+                continue
 
-                    # Set all metrics to -1 (flag value)
-                    metrics = {key: -1 for key in metrics.keys()}
-                    metrics['time'] = train_time
+            for train_size, train_idx in sorted(train_splits.items()):
+                x_train, x_test, preprocessing = preprocess_split(
+                    x.iloc[train_idx],
+                    x.iloc[test_idx],
+                )
 
+                y_train = y.iloc[train_idx]
+                y_test = y.iloc[test_idx]
+
+                result_folder = os.path.join(
+                    args['results_folder'],
+                    str(train_size),
+                    dataset_name,
+                )
+                os.makedirs(result_folder, exist_ok=True)
+
+                for model_name in args['models']:
+                    tasks.append(
+                        delayed(run_experiment)(
+                            dataset_name, train_size, model_name,
+                            x_train, y_train, x_test, y_test,
+                            train_idx, test_idx, preprocessing,
+                            result_folder, args,
+                        )
+                    )
+
+        total_tasks = len(tasks)
+        trained = 0
+        reused = 0
+
+        print(f'Total experiment tasks: {total_tasks}', flush=True)
+
+        with parallel_config(backend='loky', inner_max_num_threads=1):
+            completed_tasks = Parallel(
+                n_jobs=args['experiment_jobs'],
+                return_as='generator_unordered',
+            )(tasks)
+
+            for completed, task_result in enumerate(completed_tasks, start=1):
+                dataset, size, model, status = task_result
+
+                if status == 'trained':
+                    trained += 1
                 else:
-                    y_pred = best_model.predict(x_test)
-                    y_proba = best_model.predict_proba(x_test)
-                    # metrics = get_metrics(y_test, y_pred, y_proba)
-                    metrics = get_bootstrap_metrics(y_test, y_pred, y_proba)
-                    print(f"{model_name} trained in {train_time:.4f} seconds. Metrics:")
-                    print(metrics)
-                    metrics.update(best_params)
-                    metrics['dataset'] = dataset_name
-                    metrics['time'] = train_time
+                    reused += 1
 
-                # Save the metrics
-                with open(os.path.join(args['results_folder'], dataset_name, model_name + '.pkl'), 'wb') as f:
-                    pickle.dump(metrics, f, protocol=pickle.HIGHEST_PROTOCOL)
+                print(
+                    f'Progress: {completed}/{total_tasks} '
+                    f'({100 * completed / total_tasks:.1f}%) | '
+                    f'trained={trained}, reused={reused} | '
+                    f'{dataset}, N={size}, {model}: {status}',
+                    flush=True,
+                )
 
-    #### Show results
-    results_table, table_col_names, results_table_no_ci = get_results_table(args)
-    get_box_plots(args['results_folder'])
-    mrr_all = get_mrr_models()  # Compute MRR for each metric among all models
-    get_mrr_datasets(mrr_all)  # Compute MRR for each model among all datasets
-    get_p_values()  # Get p-values to compare them with MRR values
+    # Read one table per size, including when train=False.
+    available_sizes = sorted({
+        size
+        for dataset in args['datasets']
+        for size in args['dataset_sizes'][dataset]
+        if (
+            args['sample_sizes'] is None
+            or size in args['sample_sizes']
+        )
+    })
+
+    for train_size in available_sizes:
+        table_args = args.copy()
+        table_args['datasets'] = [
+            dataset
+            for dataset in args['datasets']
+            if train_size in args['dataset_sizes'][dataset]
+        ]
+        table_args['results_folder'] = os.path.join(
+            args['results_folder'],
+            str(train_size),
+        )
+
+        print(f'\nResults for training size N={train_size}')
+        get_results_table(table_args)
+        get_calibration_tables(table_args)
+        get_multiclass_table(table_args)

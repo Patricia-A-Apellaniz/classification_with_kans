@@ -14,7 +14,8 @@ class FeatureNN(torch.nn.Module):
         num_units: int,
         dropout: float,
         hidden_sizes: list = [64, 32],
-        activation: str = 'relu'
+        activation: str = 'relu',
+        output_size: int = 1,
     ) -> None:
         """Initializes FeatureNN hyperparameters.
 
@@ -49,7 +50,13 @@ class FeatureNN(torch.nn.Module):
             layers.append(nn.ReLU())
 
         ## Last Linear Layer
-        layers.append(nn.Linear(in_features=all_hidden_sizes[-1], out_features=1, bias=False))
+        layers.append(
+            nn.Linear(
+                in_features=all_hidden_sizes[-1],
+                out_features=output_size,
+                bias=False,
+            )
+        )
 
         self.model = nn.ModuleList(layers)
 

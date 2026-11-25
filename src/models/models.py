@@ -38,6 +38,10 @@ class NAMModel:
     def fit(self, x, y):
         self.set_model()
         self.model.fit(x, y)
+
+        if self.model._multiclass:
+            self.classes_ = self.model.classes_
+
         return {}
 
     def set_model(self):
@@ -66,12 +70,24 @@ class NAMModel:
         return self
 
     def predict_proba(self, data):
-        prob_of_ones = self.model.predict_proba(data)
+        probabilities = self.model.predict_proba(data)
+
+        if self.model._multiclass:
+            return probabilities
+
+        # Preserve the existing binary behavior.
+        prob_of_ones = probabilities
         prob_of_zeros = 1 - prob_of_ones
+
         return np.hstack([prob_of_zeros, prob_of_ones])
 
     def predict(self, data, threshold=0.5):
         proba_preds = self.predict_proba(data)
+
+        if self.model._multiclass:
+            return self.classes_[np.argmax(proba_preds, axis=1)]
+
+        # Preserve the existing binary behavior.
         return np.argmax(proba_preds, axis=1).astype(int)
 
     def run_model(self, x_train, x_test, y_train, y_test):
@@ -79,6 +95,9 @@ class NAMModel:
 
         # Train the model
         _ = self.model.fit(x_train, y_train)
+
+        if self.model._multiclass:
+            self.classes_ = self.model.classes_
 
         return {'model': self.model,
                 'y_pred_proba': np.squeeze(self.predict_proba(x_test)),
@@ -248,16 +267,21 @@ class Kan_model:
         self.model = KAN(width=self.width, grid=self.hyperparameters["grid"], k=self.hyperparameters["k"],
                          seed=0, device=self.device, sparse_init=self.hyperparameters["sparse_init"])
 
-        if isinstance(x_train, np.ndarray):
-            self.x_train = torch.from_numpy(x_train).to(self.device).float()
-            self.y_train = np.squeeze(torch.from_numpy(y_train).to(self.device)).long()
-            self.x_test = torch.from_numpy(x_test).to(self.device).float()
-            self.y_test = np.squeeze(torch.from_numpy(y_test).to(self.device)).long()
-        else:
-            self.x_train = torch.from_numpy(x_train.values).to(self.device).float()
-            self.y_train = np.squeeze(torch.from_numpy(y_train.values).to(self.device)).long()
-            self.x_test = torch.from_numpy(x_test.values).to(self.device).float()
-            self.y_test = np.squeeze(torch.from_numpy(y_test.values).to(self.device)).long()
+        self.x_train = torch.from_numpy(
+            np.asarray(x_train)
+        ).to(self.device).float()
+
+        self.y_train = torch.from_numpy(
+            np.asarray(y_train)
+        ).to(self.device).squeeze().long()
+
+        self.x_test = torch.from_numpy(
+            np.asarray(x_test)
+        ).to(self.device).float()
+
+        self.y_test = torch.from_numpy(
+            np.asarray(y_test)
+        ).to(self.device).squeeze().long()
 
         # Note that KAN interface uses "test" for what we call "val": we reverse here for consistency
         self.dataset = {'train_input': self.x_train,
@@ -415,15 +439,14 @@ class Kan_model:
         self.model.symbolic_enabled = old_symbolic_enabled
         return results
 
-    def run_model(self, x_train, x_test, y_train, y_test):
+    def run_model(self, x_train, x_test, y_train, y_test, verbose=0):
         self.set_model(x_train, x_test, y_train, y_test)
-
         # Train the model
         _ = self.custom_fit(self.dataset, batch=self.hyperparameters["batch_size"],
                             steps=self.hyperparameters["steps"], lamb=self.hyperparameters["lamb"],
                             lamb_entropy=self.hyperparameters["lamb_entropy"], lr=self.hyperparameters["lr"],
                             early_stop=self.hyperparameters["early_stop"], patience=30,
-                            save_fig=False, verbose=0)
+                            save_fig=False, verbose=verbose)
 
         return {'model': self.model,
                 'y_pred_proba': np.squeeze(self.predict_proba(self.x_test)),
@@ -542,11 +565,22 @@ class Mlp_model:
     def get_params(self, deep=False):
         return self.hyperparameters
 
-    def set_params(self, hidden_layer_sizes=(32,), max_iter=10000, early_stopping=True, alpha=0.0001):
-        self.hyperparameters = {'hidden_layer_sizes': hidden_layer_sizes,
-                                'max_iter': max_iter,
-                                'early_stopping': early_stopping,
-                                'alpha': alpha}
+    def set_params(
+        self,
+        hidden_layer_sizes=(32,),
+        max_iter=10000,
+        early_stopping=True,
+        alpha=0.0001,
+    ):
+        self.hyperparameters = {
+            'hidden_layer_sizes': hidden_layer_sizes,
+            'max_iter': max_iter,
+            'early_stopping': early_stopping,
+            'alpha': alpha,
+        }
+
+        self.model = MLPClassifier(**self.hyperparameters)
+
         return self
 
     def run_model(self, x_train, y_train, x_test, y_test):
